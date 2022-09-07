@@ -1,6 +1,8 @@
 script_name("Wanted")
-script_version("0.1")
 script_author("akacross")
+
+local script_version = 0.1
+local script_version_text = '0.1'
 
 require"lib.moonloader"
 require"lib.sampfuncs"
@@ -19,6 +21,9 @@ encoding.default = 'CP1251'
 local u8 = encoding.UTF8
 local path = getWorkingDirectory() .. '\\config\\' 
 local cfg = path .. 'wanted.ini'
+local script_path = thisScript().path
+local script_url = "https://raw.githubusercontent.com/akacross/wanted/main/wanted.lua"
+local update_url = "https://raw.githubusercontent.com/akacross/wanted/main/wanted.txt"
 
 local blank = {}
 local wanted = {
@@ -76,7 +81,7 @@ imgui.OnFrame(function() return menu[0] and not isGamePaused() end,
 function()
 	local width, height = getScreenResolution()
 	imgui.SetNextWindowPos(imgui.ImVec2(width / 2, height / 2), imgui.Cond.Always, imgui.ImVec2(0.5, 0.5))
-	imgui.Begin(fa.ICON_FA_SHIELD_ALT .. "Wanted Settings", menu, imgui.WindowFlags.NoResize + imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoMove + imgui.WindowFlags.NoScrollbar + imgui.WindowFlags.AlwaysAutoResize)
+	imgui.Begin(fa.ICON_FA_STAR .. string.format("%s Settings - Version: %s", script.this.name, script_version_text), menu, imgui.WindowFlags.NoResize + imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoMove + imgui.WindowFlags.NoScrollbar + imgui.WindowFlags.AlwaysAutoResize)
 
 		imgui.BeginChild("##1", imgui.ImVec2(85, 392), true)
 				
@@ -215,6 +220,17 @@ function main()
 	end)
 	
 	while true do wait(0)
+		
+		if update then
+			menu[0] = false
+			lua_thread.create(function() 
+				wanted.autosave = false
+				os.remove(cfg)
+				wait(20000) 
+				thisScript():reload()
+				update = false
+			end)
+		end
 		
 		if table.contains_key(wantedlist, 1) then
 			windowdisable = true
@@ -359,6 +375,31 @@ function saveIni()
 			f:close()
 		end
 	end
+end
+
+function update_script()
+	downloadUrlToFile(update_url, getWorkingDirectory()..'/'..string.lower(script.this.name)..'.txt', function(id, status)
+		if status == dlstatus.STATUS_ENDDOWNLOADDATA then
+			update_text = https.request(update_url)
+			update_version = update_text:match("version: (.+)")
+			
+			--local split1 = split(script_path, 'moonloader\\')
+			--local split2 = split(split1[2], ".")
+			--if split2[2] ~= nil then
+				--if split2[2] ~= 'lua' then
+					if tonumber(update_version) > script_version then
+						sampAddChatMessage(string.format("{ABB2B9}[%s]{FFFFFF} New version found! The update is in progress..", script.this.name), -1)
+						downloadUrlToFile(script_url, script_path, function(id, status)
+							if status == dlstatus.STATUS_ENDDOWNLOADDATA then
+								sampAddChatMessage(string.format("{ABB2B9}[%s]{FFFFFF} The update was successful!", script.this.name), -1)
+								update = true
+							end
+						end)
+					end
+				--end
+			--end
+		end
+	end)
 end
 
 function table.contains(table, element)
