@@ -1,8 +1,9 @@
 script_name("Wanted")
 script_author("akacross")
+script_url("https://akacross.net/")
 
-local script_version = 0.1
-local script_version_text = '0.1'
+local script_version = 0.2
+local script_version_text = '0.2'
 
 require"lib.moonloader"
 require"lib.sampfuncs"
@@ -28,6 +29,7 @@ local update_url = "https://raw.githubusercontent.com/akacross/wanted/main/wante
 local blank = {}
 local wanted = {
 	autosave = true,
+	autoupdate = false,
 	_enabled = true,
 	messages = false,
 	timer = 5,
@@ -71,7 +73,11 @@ function()
 	imgui.Begin(script.this.name, nil, imgui.WindowFlags.NoTitleBar + imgui.WindowFlags.NoResize + imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoMove + imgui.WindowFlags.NoScrollbar + imgui.WindowFlags.AlwaysAutoResize)
 		for index, data in ipairs(wantedlist) do
 			for key, value in pairs(data) do
-				imgui.Text(string.format('%s (%d): %d outstanding charges.',value.PlayerName, value.PlayerID, value.Charges))
+				if table.contains(value, 'No current wanted suspects.') then
+					imgui.Text(value.Message)
+				else
+					imgui.Text(string.format('%s[%d]: %d outstanding charges.',value.PlayerName, value.PlayerID, value.Charges))
+				end
 			end
 		end
 	imgui.End()
@@ -149,7 +155,7 @@ function()
 				imgui.ImVec4(0.40, 0.12, 0.12, 1), 
 				imgui.ImVec4(0.30, 0.08, 0.08, 1),  
 				imgui.ImVec2(75, 75)) then
-				--update_script()
+				update_script()
 			end
 			if imgui.IsItemHovered() then
 				imgui.SetTooltip('Update the script')
@@ -208,13 +214,9 @@ function main()
 	blank = table.deepcopy(wanted)
 	if not doesDirectoryExist(path) then createDirectory(path) end
 	if doesFileExist(cfg) then loadIni() else blankIni() end
+	wanted = table.assocMerge(blank, wanted)
 	while not isSampAvailable() do wait(100) end
-	
-	sampRegisterChatCommand('wanted.move', function()
-		showCursor(true, false)
-		move = not move
-	end)
-	
+	sampAddChatMessage("["..script.this.name..'] '.. "{FF1A74}(/wanted.settings) Authors: " .. table.concat(thisScript().authors, ", "), -1)
 	sampRegisterChatCommand('wanted.settings', function()
 		menu[0] = not menu[0]
 	end)
@@ -241,17 +243,15 @@ function main()
 		if move then	
 			x, y = getCursorPos()
 			if isKeyJustPressed(VK_LBUTTON) then 
-				showCursor(false, false)
 				move = false
 			elseif isKeyJustPressed(VK_ESCAPE) then
-				showCursor(false, false)
 				move = false
 			else 
 				wanted.windowpos[1] = x + 1
 				wanted.windowpos[2] = y + 1
 			end
 		end
-	
+		
 		if wanted._enabled and wanted.timer <= localClock() - _last_wanted then
 			wanted_toggle = true
 			sampSendChat("/wanted")
@@ -286,6 +286,7 @@ function sampev.onSendCommand(command)
 end
 
 function sampev.onServerMessage(color, text)
+
 	if text:find("__________WANTED LIST__________") then
 		if not wanted_toggle and wanted.messages then
 			message(text, color)
@@ -327,7 +328,9 @@ function sampev.onServerMessage(color, text)
 			refresh = false
 		end
 		local tbl = {
-			["message"] = text
+			["charges"] = {
+				["Message"] = text
+			}
 		}
 		table.insert(wantedlist, tbl);
 		if not wanted_toggle and wanted.messages then
@@ -336,7 +339,11 @@ function sampev.onServerMessage(color, text)
 		return false
 	end
 	
-	if text:find("________________________________") then
+	if text:find("You're not a Lawyer / Cop / FBI!") then
+		return false
+	end
+	
+	if text:find("________________________________") and string.len(text) == 32 then
 		if not wanted_toggle and wanted.messages then
 			message(text, color)
 		end
@@ -400,15 +407,6 @@ function update_script()
 			--end
 		end
 	end)
-end
-
-function table.contains(table, element)
-	for _, value in ipairs(table) do
-		if value == element then
-			return true
-		end
-	end
-	return false
 end
 
 function table.contains_key(table, element)
@@ -475,7 +473,7 @@ function colorRgbToHex(rgb)
 	local hexadecimal = ''
 	for key, value in pairs(rgb) do
 		local hex = ''
-		while(value > 0)do
+		while (value > 0) do
 			local index = math.fmod(value, 16) + 1
 			value = math.floor(value / 16)
 			hex = string.sub('0123456789ABCDEF', index, index) .. hex
