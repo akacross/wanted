@@ -2,8 +2,8 @@ script_name("Wanted")
 script_author("akacross")
 script_url("https://akacross.net/")
 
-local script_version = 0.2
-local script_version_text = '0.2'
+local script_version = 0.3
+local script_version_text = '0.3'
 
 require"lib.moonloader"
 require"lib.sampfuncs"
