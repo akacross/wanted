@@ -29,7 +29,7 @@ local update_url = "https://raw.githubusercontent.com/akacross/wanted/main/wante
 local blank = {}
 local wanted = {
 	autosave = true,
-	autoupdate = false,
+	autoupdate = true,
 	_enabled = true,
 	messages = false,
 	timer = 5,
@@ -43,6 +43,7 @@ local wanted_toggle = false
 local windowdisable = false
 local temp_pos = {x = 0, y = 0}
 local move = false
+local isgamepaused = false
 
 local function loadIconicFont(fromfile, fontSize, min, max, fontdata)
     local config = imgui.ImFontConfig()
@@ -57,7 +58,7 @@ local function loadIconicFont(fromfile, fontSize, min, max, fontdata)
 end
 
 imgui.OnInitialize(function()
-	apply_custom_style() -- apply custom style
+	apply_custom_style()
 
 	loadIconicFont(false, 14.0, faicons.min_range, faicons.max_range, faicons.get_font_data_base85())
 	loadIconicFont(true, 14.0, fa.min_range, fa.max_range, 'moonloader/resource/fonts/fa-solid-900.ttf')
@@ -67,23 +68,21 @@ imgui.OnInitialize(function()
 	imgui.GetIO().IniFilename = nil
 end)
 
-imgui.OnFrame(function() return wanted._enabled and windowdisable and not isGamePaused() end,
+imgui.OnFrame(function() return wanted._enabled and windowdisable and not isgamepaused end,
 function()
 	imgui.SetNextWindowPos(imgui.ImVec2(wanted.windowpos[1], wanted.windowpos[2]), imgui.Cond.Always)
 	imgui.Begin(script.this.name, nil, imgui.WindowFlags.NoTitleBar + imgui.WindowFlags.NoResize + imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoMove + imgui.WindowFlags.NoScrollbar + imgui.WindowFlags.AlwaysAutoResize)
-		for index, data in ipairs(wantedlist) do
-			for key, value in pairs(data) do
-				if table.contains(value, 'No current wanted suspects.') then
-					imgui.Text(value.Message)
-				else
-					imgui.Text(string.format('%s[%d]: %d outstanding charges.',value.PlayerName, value.PlayerID, value.Charges))
-				end
+		for key, value in pairs(wantedlist) do
+			if table.contains(value, "No current wanted suspects.") then
+				imgui.Text(value.Message)
+			else
+				imgui.Text(string.format("%s[%s]: %s outstanding charges.", value.PlayerName, value.PlayerID, value.Charges))
 			end
 		end
 	imgui.End()
 end).HideCursor = true
 
-imgui.OnFrame(function() return menu[0] and not isGamePaused() end,
+imgui.OnFrame(function() return menu[0] and not isgamepaused end,
 function()
 	local width, height = getScreenResolution()
 	imgui.SetNextWindowPos(imgui.ImVec2(width / 2, height / 2), imgui.Cond.Always, imgui.ImVec2(0.5, 0.5))
@@ -165,7 +164,7 @@ function()
 		
 		imgui.SetCursorPos(imgui.ImVec2(92, 28))
 
-		imgui.BeginChild("##2", imgui.ImVec2(337, 88), true)
+		imgui.BeginChild("##2", imgui.ImVec2(337, 100), true)
       
 			imgui.SetCursorPos(imgui.ImVec2(5,5))
 			if imgui.CustomButton(fa.ICON_FA_COG .. '  Settings',
@@ -222,10 +221,9 @@ function main()
 	end)
 	
 	while true do wait(0)
-		
 		if update then
-			menu[0] = false
 			lua_thread.create(function() 
+				menu[0] = false
 				wanted.autosave = false
 				os.remove(cfg)
 				wait(20000) 
@@ -252,7 +250,7 @@ function main()
 			end
 		end
 		
-		if wanted._enabled and wanted.timer <= localClock() - _last_wanted then
+		if wanted._enabled and wanted.timer <= localClock() - _last_wanted and not isgamepaused then
 			wanted_toggle = true
 			sampSendChat("/wanted")
 			_last_wanted = localClock()
@@ -269,6 +267,12 @@ function onScriptTerminate(scr, quitGame)
 end
 
 function onWindowMessage(msg, wparam, lparam)
+	if msg == wm.WM_KILLFOCUS then
+		isgamepaused = true
+	elseif msg == wm.WM_SETFOCUS then
+		isgamepaused = false
+	end
+
 	if wparam == VK_ESCAPE and menu[0] then
         if msg == wm.WM_KEYDOWN then
             consumeWindowMessage(true, false)
@@ -287,67 +291,57 @@ end
 
 function sampev.onServerMessage(color, text)
 
-	if text:find("__________WANTED LIST__________") then
+	if text:find("__________WANTED LIST__________") and wanted._enabled then
 		if not wanted_toggle and wanted.messages then
 			message(text, color)
 		end
 		return false
 	end
 	
-	if text:find("outstanding charges.") then
-		local split1 = split(text ,"{")
-		local split2 = split(split1[2] ,"}")
-		local split3 = split(split1[1] ,"(")
-		if split1 then
-			local id = string.match(split1[1], "%d+")
-			if split2 then
-				local number = string.match(split2[2], "%d+")
-				if refresh then
-					wantedlist = {}
-					refresh = false
-				end
-				local tbl = {
-					["charges"] = {
-						["PlayerName"] = split3[1],
-						["PlayerID"] = id,
-						["Charges"] = number
-					}
-				}
-				table.insert(wantedlist, tbl);
-				if not wanted_toggle and wanted.messages then
-					message(text, color)
-				end
-				return false
-			end
-		end
-	end
-	
-	if text:find("No current wanted suspects.") then
+	if text:find("outstanding charges.") and wanted._enabled then
 		if refresh then
 			wantedlist = {}
 			refresh = false
 		end
-		local tbl = {
-			["charges"] = {
-				["Message"] = text
-			}
+		
+		local nickname, playerid, charges = text:match("(.+) %((.+)%): %{b4b4b4%}(.+) outstanding charges.")
+		wantedlist[#wantedlist + 1] = {
+			["PlayerName"] = nickname,
+			["PlayerID"] = playerid,
+			["Charges"] = charges
 		}
-		table.insert(wantedlist, tbl);
+		
+		if not wanted_toggle and wanted.messages then
+			message(text, color)
+		end
+		
+		return false
+	end
+	
+	if text:find("No current wanted suspects.") and wanted._enabled then
+		if refresh then
+			wantedlist = {}
+			refresh = false
+		end
+		
+		wantedlist[#wantedlist + 1] = {
+			["Message"] = text
+		}
 		if not wanted_toggle and wanted.messages then
 			message(text, color)
 		end
 		return false
 	end
 	
-	if text:find("You're not a Lawyer / Cop / FBI!") then
-		return false
-	end
-	
-	if text:find("________________________________") and string.len(text) == 32 then
+	if text:find("________________________________") and string.len(text) == 32 and wanted._enabled then
 		if not wanted_toggle and wanted.messages then
 			message(text, color)
 		end
 		wanted_toggle = false
+		return false
+	end
+	
+	if text:find("You're not a Lawyer / Cop / FBI!") and wanted._enabled then
 		return false
 	end
 end
