@@ -1,6 +1,6 @@
 script_name("wanted")
 script_author("akacross")
-script_version("0.5.15")
+script_version("0.5.16")
 script_url("https://akacross.net/")
 
 local scriptPath = thisScript().path
@@ -214,36 +214,35 @@ function()
 		size = imgui.GetWindowSize()
 	imgui.End()
 end).HideCursor = true
-
+--imgui.SetCursorPos(imgui.ImVec2(5, 203))
 imgui.OnFrame(function() return menu[0] end,
 function()
     local width, height = getScreenResolution()
     imgui.SetNextWindowPos(imgui.ImVec2(width / 2, height / 2), imgui.Cond.Always, imgui.ImVec2(0.5, 0.5))
     imgui.PushStyleVarVec2(imgui.StyleVar.WindowPadding, imgui.ImVec2(0, 0))
     imgui.Begin(string.format("%s %s Settings - Version: %s", fa.STAR, scriptName, scriptVersion), menu, imgui.WindowFlags.NoResize + imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoScrollbar + imgui.WindowFlags.AlwaysAutoResize)
-        imgui.BeginChild("##1", imgui.ImVec2(95, 255), true)
-        imgui.SetCursorPos(imgui.ImVec2(5, 5))
+        imgui.BeginChild("##1", imgui.ImVec2(272, 41), true)
 
+        imgui.SetCursorPos(imgui.ImVec2(0, 0))
         if imgui.CustomButtonWithTooltip(
             fa.POWER_OFF..'##1',
             wanted.enabled and imgui.ImVec4(0.15, 0.59, 0.18, 0.7) or imgui.ImVec4(1, 0.19, 0.19, 0.5),
             wanted.enabled and imgui.ImVec4(0.15, 0.59, 0.18, 0.5) or imgui.ImVec4(1, 0.19, 0.19, 0.3),
             wanted.enabled and imgui.ImVec4(0.15, 0.59, 0.18, 0.4) or imgui.ImVec4(1, 0.19, 0.19, 0.2),
-            imgui.ImVec2(90, 37.5),
-            "Give damage toggle"
+            imgui.ImVec2(50.0, 40.0),
+            "Toggle Wanted Menu"
         ) then
             wanted.enabled = not wanted.enabled
         end
 
-        imgui.SetCursorPos(imgui.ImVec2(5, 43.5))
-
+        imgui.SetCursorPos(imgui.ImVec2(51, 0))
         if imgui.CustomButtonWithTooltip(
             fa.FLOPPY_DISK,
             imgui.ImVec4(0.16, 0.16, 0.16, 0.9),
             imgui.ImVec4(mainc.x, mainc.y, mainc.z, 0.5),
             imgui.ImVec4(mainc.x, mainc.y, mainc.z, 1),
-            imgui.ImVec2(90, 37.5),
-            "Save the Script"
+            imgui.ImVec2(50.0, 40.0),
+            'Save configuration'
         ) then
             local success, err = saveConfig(cfgFile, wanted)
             if not success then
@@ -251,58 +250,50 @@ function()
             end
         end
 
-        imgui.SetCursorPos(imgui.ImVec2(5, 82))
-
+        imgui.SetCursorPos(imgui.ImVec2(101, 0))
         if imgui.CustomButtonWithTooltip(
             fa.REPEAT,
             imgui.ImVec4(0.16, 0.16, 0.16, 0.9),
             imgui.ImVec4(mainc.x, mainc.y, mainc.z, 0.5),
             imgui.ImVec4(mainc.x, mainc.y, mainc.z, 1),
-            imgui.ImVec2(90, 37.5),
-            "Reload the Script"
+            imgui.ImVec2(50.0, 40.0),
+            'Reload configuration'
         ) then
-            loadIni()
+            wanted = handleConfigFile(cfgFile, wanted_defaultSettings, wanted)
         end
 
-        imgui.SetCursorPos(imgui.ImVec2(5, 120.5))
-
+        imgui.SetCursorPos(imgui.ImVec2(151, 0))
         if imgui.CustomButtonWithTooltip(
             fa.ERASER,
             imgui.ImVec4(0.16, 0.16, 0.16, 0.9),
             imgui.ImVec4(mainc.x, mainc.y, mainc.z, 0.5),
             imgui.ImVec4(mainc.x, mainc.y, mainc.z, 1),
-            imgui.ImVec2(90, 37.5),
-            "Reset the Script to default settings"
+            imgui.ImVec2(50.0, 40.0),
+            'Load default configuration'
         ) then
-            blankIni()
+            ensureDefaults(wanted, wanted_defaultSettings, true)
         end
 
-        imgui.SetCursorPos(imgui.ImVec2(5, 159))
-
+        imgui.SetCursorPos(imgui.ImVec2(201, 0))
         if imgui.CustomButtonWithTooltip(
             fa.RETWEET .. ' Update',
             imgui.ImVec4(0.16, 0.16, 0.16, 0.9),
             imgui.ImVec4(mainc.x, mainc.y, mainc.z, 0.5),
             imgui.ImVec4(mainc.x, mainc.y, mainc.z, 1),
-            imgui.ImVec2(90, 37.5),
-            "Update the script"
+            imgui.ImVec2(70.0, 40.0),
+            'Check for update (Disabled)'
         ) then
-            ---
+            -- add later
         end
 
-        imgui.SetCursorPos(imgui.ImVec2(5, 203))
+        imgui.EndChild()
+
+        imgui.SetCursorPos(imgui.ImVec2(0, 60))
+        imgui.BeginChild("##2", imgui.ImVec2(272, 55), true)
 
         if imgui.Checkbox('Autosave', new.bool(wanted.autosave)) then
             wanted.autosave = not wanted.autosave
         end
-
-        imgui.SetCursorPos(imgui.ImVec2(5, 230))
-
-        imgui.EndChild()
-
-        imgui.SetCursorPos(imgui.ImVec2(100, 25))
-
-        imgui.BeginChild("##3", imgui.ImVec2(135, 255), true)
 
         imgui.EndChild()
     imgui.PopStyleVar()
