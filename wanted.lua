@@ -1,6 +1,6 @@
 script_name("wanted")
 script_author("akacross")
-script_version("0.5.12")
+script_version("0.5.15")
 script_url("https://akacross.net/")
 
 local scriptPath = thisScript().path
@@ -10,18 +10,12 @@ local scriptVersion = thisScript().version
 -- Requirements
 require 'lib.moonloader'
 local ffi = require 'ffi'
-local effil = require 'effil'
-local lfs = require 'lfs'
 local mem = require 'memory'
 local wm = require 'lib.windows.message'
 local imgui = require 'mimgui'
 local encoding = require 'encoding'
 local sampev = require 'lib.samp.events'
-local weapons = require 'game.weapons'
-local flag = require 'moonloader'.font_flag
 local fa = require 'fAwesome6'
-local requests = require 'requests'
-local dlstatus = require 'moonloader'.download_status
 
 -- Encoding
 encoding.default = 'CP1251'
@@ -32,31 +26,25 @@ local workingDir = getWorkingDirectory()
 local configDir = workingDir .. '\\config\\'
 local cfgFile = configDir .. 'wanted.json'
 
-
-local mainc = imgui.ImVec4(0.98, 0.26, 0.26, 1.00)
-local new, str, sizeof = imgui.new, ffi.string, ffi.sizeof
 local wanted = {}
 local wanted_defaultSettings = {
 	autosave = true,
-	_enabled = true,
+	enabled = true,
 	timer = 5,
 	windowpos = {500, 500}
 }
 
 local ped, h = playerPed, playerHandle
-
-local menu = new.bool(false)
 local wantedlist = nil
-local _last_wanted = 0
-local refresh = false
-local windowdisable = false
-local inuse_move = false 
-local selectedbox = false
-local size = {
-	{x = 0, y = 0}
-}
+local last_wanted = 0
+
+local new, str, sizeof = imgui.new, ffi.string, ffi.sizeof
+local menu = new.bool(false)
+local mainc = imgui.ImVec4(0.98, 0.26, 0.26, 1.00)
 local offsetX = 0
 local offsetY = 0
+local size = {{x = 0, y = 0}}
+local selectedbox = false
 
 local function handleConfigFile(path, defaults, configVar, ignoreKeys)
 	ignoreKeys = ignoreKeys or {}
@@ -96,20 +84,19 @@ end
 
 function main()
 	createDirectory(configDir)
-
 	wanted = handleConfigFile(cfgFile, wanted_defaultSettings, wanted)
 
 	repeat wait(0) until isSampAvailable()
 
 	sampRegisterChatCommand('wanted.settings', function()
-		menu[0] = not menu[0]
-	end)
+        menu[0] = not menu[0]
+    end)
 
 	while true do wait(0)
 		if sampGetGamestate() ~= 3 and wantedlist then wantedlist = nil end
-		if wanted._enabled and wanted.timer <= localClock() - _last_wanted then
+		if wanted.enabled and wanted.timer <= localClock() - last_wanted then
 			sampSendChat("/wanted")
-			_last_wanted = localClock()
+			last_wanted = localClock()
 		end
 	end
 end
@@ -118,9 +105,7 @@ function onScriptTerminate(scr, quitGame)
 	if scr == script.this then
 		if wanted.autosave then
 			local success, err = saveConfig(cfgFile, wanted)
-            if not success then
-                print("Error saving config: " .. err)
-            end
+            if not success then print("Error saving config: " .. err) end
 		end
 	end
 end
@@ -136,42 +121,36 @@ function onWindowMessage(msg, wparam, lparam)
     end
 end
 
-function sampev.onSendCommand(command)
-	if string.find(command, '/wanted') then
-		refresh = true
-	end
-end
-
 function sampev.onServerMessage(color, text)
-	if wanted._enabled then
-		if text:match("You're not a Lawyer / Cop / FBI!") then
-			wanted._enabled = false
-			return false
-		end
+    if wanted.enabled then
+        if text:match("You're not a Lawyer / Cop / FBI!") then
+            wanted.enabled = false
+            return false
+        end
 
-		if text:match("__________WANTED LIST__________") then return false end
-		if text:match("________________________________") and string.len(text) == 32 then return false end
+        if text:match("__________WANTED LIST__________") then
+            -- Clear the existing wanted list when the wanted list header is detected
+            wantedlist = {}
+            return false
+        end
 
-		if text:match("No current wanted suspects.") then
-			wantedlist = nil
-			return false
-		end
+        if text:match("________________________________") and string.len(text) == 32 then return false end
 
-		local nickname, playerid, charges = text:match("(.+) %((%d+)%): %{b4b4b4%}(%d+) outstanding charge[s]?%.")
-		if nickname and playerid and charges then
-			if not wantedlist or refresh then
-				wantedlist = {}
-				refresh = false
-			end
-			wantedlist[#wantedlist + 1] = {
-				["PlayerName"] = nickname,
-				["PlayerID"] = playerid,
-				["Charges"] = charges
-			}
+        if text:match("No current wanted suspects.") then
+            wantedlist = nil
+            return false
+        end
 
-			return false
-		end
-	end
+        local nickname, playerid, charges = text:match("(.+) %((%d+)%): %{b4b4b4%}(%d+) outstanding charge[s]?%.")
+        if nickname and playerid and charges then
+            table.insert(wantedlist, {
+                name = nickname,
+                id = playerid,
+                charges = charges
+            })
+            return false
+        end
+    end
 end
 
 imgui.OnInitialize(function()
@@ -200,7 +179,7 @@ imgui.OnInitialize(function()
 	imgui.GetIO().IniFilename = nil
 end)
 
-imgui.OnFrame(function() return wanted._enabled and not isPauseMenuActive() and not sampIsScoreboardOpen() and sampGetChatDisplayMode() > 0 and not isKeyDown(VK_F10) end,
+imgui.OnFrame(function() return wanted.enabled and not isPauseMenuActive() and not sampIsScoreboardOpen() and sampGetChatDisplayMode() > 0 and not isKeyDown(VK_F10) end,
 function()
 	if menu[0] then
 		local mpos = imgui.GetMousePos()
@@ -227,7 +206,7 @@ function()
 	imgui.Begin(script.this.name, nil, imgui.WindowFlags.NoTitleBar + imgui.WindowFlags.NoResize + imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoMove + imgui.WindowFlags.NoScrollbar + imgui.WindowFlags.AlwaysAutoResize)
 		if wantedlist then
 			for _, v in pairs(wantedlist) do
-				imgui.Text(string.format("%s(%s): %s outstanding charges.", v.PlayerName, v.PlayerID, v.Charges))
+				imgui.Text(string.format("%s(%s): %s outstanding charges.", v.name, v.id, v.charges))
 			end
 		else
 			imgui.Text("No current wanted suspects.")
@@ -235,22 +214,6 @@ function()
 		size = imgui.GetWindowSize()
 	imgui.End()
 end).HideCursor = true
-
-function imgui.CustomButtonWithTooltip(name, color, colorHovered, colorActive, size, tooltip)
-    local clr = imgui.Col
-    imgui.PushStyleColor(clr.Button, color)
-    imgui.PushStyleColor(clr.ButtonHovered, colorHovered)
-    imgui.PushStyleColor(clr.ButtonActive, colorActive)
-    if not size then size = imgui.ImVec2(0, 0) end
-    local result = imgui.Button(name, size)
-    imgui.PopStyleColor(3)
-    if imgui.IsItemHovered() and tooltip then
-        imgui.PushStyleVarVec2(imgui.StyleVar.WindowPadding, imgui.ImVec2(8, 8))
-        imgui.SetTooltip(tooltip)
-        imgui.PopStyleVar()
-    end
-    return result
-end
 
 imgui.OnFrame(function() return menu[0] end,
 function()
@@ -263,13 +226,13 @@ function()
 
         if imgui.CustomButtonWithTooltip(
             fa.POWER_OFF..'##1',
-            wanted._enabled and imgui.ImVec4(0.15, 0.59, 0.18, 0.7) or imgui.ImVec4(1, 0.19, 0.19, 0.5),
-            wanted._enabled and imgui.ImVec4(0.15, 0.59, 0.18, 0.5) or imgui.ImVec4(1, 0.19, 0.19, 0.3),
-            wanted._enabled and imgui.ImVec4(0.15, 0.59, 0.18, 0.4) or imgui.ImVec4(1, 0.19, 0.19, 0.2),
+            wanted.enabled and imgui.ImVec4(0.15, 0.59, 0.18, 0.7) or imgui.ImVec4(1, 0.19, 0.19, 0.5),
+            wanted.enabled and imgui.ImVec4(0.15, 0.59, 0.18, 0.5) or imgui.ImVec4(1, 0.19, 0.19, 0.3),
+            wanted.enabled and imgui.ImVec4(0.15, 0.59, 0.18, 0.4) or imgui.ImVec4(1, 0.19, 0.19, 0.2),
             imgui.ImVec2(90, 37.5),
             "Give damage toggle"
         ) then
-            wanted._enabled = not wanted._enabled
+            wanted.enabled = not wanted.enabled
         end
 
         imgui.SetCursorPos(imgui.ImVec2(5, 43.5))
@@ -432,6 +395,22 @@ function ensureDefaults(config, defaults, reset, ignoreKeys)
     status = applyDefaults(config, defaults)
     status = cleanupConfig(config, defaults) or status
     return status
+end
+
+function imgui.CustomButtonWithTooltip(name, color, colorHovered, colorActive, size, tooltip)
+    local clr = imgui.Col
+    imgui.PushStyleColor(clr.Button, color)
+    imgui.PushStyleColor(clr.ButtonHovered, colorHovered)
+    imgui.PushStyleColor(clr.ButtonActive, colorActive)
+    if not size then size = imgui.ImVec2(0, 0) end
+    local result = imgui.Button(name, size)
+    imgui.PopStyleColor(3)
+    if imgui.IsItemHovered() and tooltip then
+        imgui.PushStyleVarVec2(imgui.StyleVar.WindowPadding, imgui.ImVec2(8, 8))
+        imgui.SetTooltip(tooltip)
+        imgui.PopStyleVar()
+    end
+    return result
 end
 
 function apply_custom_style()
