@@ -742,6 +742,17 @@ function imgui.CustomButtonWithTooltip(name, color, colorHovered, colorActive, s
     return result
 end
 
+function imgui.CustomButton(name, color, colorHovered, colorActive, size)
+    local clr = imgui.Col
+    imgui.PushStyleColor(clr.Button, color)
+    imgui.PushStyleColor(clr.ButtonHovered, colorHovered)
+    imgui.PushStyleColor(clr.ButtonActive, colorActive)
+    if not size then size = imgui.ImVec2(0, 0) end
+    local result = imgui.Button(name, size)
+    imgui.PopStyleColor(3)
+    return result
+end
+
 function apply_custom_style()
     imgui.SwitchContext()
     local ImVec4 = imgui.ImVec4
