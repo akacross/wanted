@@ -1,6 +1,6 @@
 script_name("wanted")
 script_author("akacross")
-script_version("0.5.21")
+script_version("0.5.22")
 script_url("https://akacross.net/")
 
 local scriptPath = thisScript().path
@@ -10,12 +10,14 @@ local scriptVersion = thisScript().version
 -- Requirements
 require 'lib.moonloader'
 local ffi = require 'ffi'
+local effil = require 'effil'
 local mem = require 'memory'
 local wm = require 'lib.windows.message'
 local imgui = require 'mimgui'
 local encoding = require 'encoding'
 local sampev = require 'lib.samp.events'
 local fa = require 'fAwesome6'
+local dlstatus = require 'moonloader'.download_status
 
 -- Encoding
 encoding.default = 'CP1251'
@@ -26,13 +28,22 @@ local workingDir = getWorkingDirectory()
 local configDir = workingDir .. '\\config\\'
 local cfgFile = configDir .. 'wanted.json'
 
+-- URLs
+local url = "https://raw.githubusercontent.com/akacross/wanted/main/"
+local scriptUrl = url .. "wanted.lua"
+local updateUrl = url .. "wanted.txt"
+
+-- Libs
 local wanted = {}
 local wanted_defaultSettings = {
-    autosave = true,
-    enabled = true,
-    stars = false,
-    timer = 5,
-    windowpos = {x = 500, y = 500}
+    autoCheckUpdate = false,
+    updateInProgress = false,
+    lastVersion = "Unknown",
+    AutoSave = true,
+    Enabled = true,
+    Stars = false,
+    Timer = 5,
+    WindowPos = {x = 500, y = 500}
 }
 
 local ped, h = playerPed, playerHandle
@@ -42,11 +53,15 @@ local last_timer = nil
 local commandSent = false
 
 local new, str, sizeof = imgui.new, ffi.string, ffi.sizeof
-local menu = new.bool(false)
+local menu = {
+    settings = new.bool(false),
+    confirm = new.bool(false)
+}
 local mainc = imgui.ImVec4(0.98, 0.26, 0.26, 1.00)
-local wantedWindowSize = {x = 0, y = 0}
-local wantedWindowOffset = {x = 0, y = 0}
+local windowSize = {x = 0, y = 0}
+local tempOffset = {x = 0, y = 0}
 local selectedbox = false
+local confirmData = {['update'] = {status = false}}
 
 local function handleConfigFile(path, defaults, configVar, ignoreKeys)
 	ignoreKeys = ignoreKeys or {}
@@ -89,25 +104,39 @@ function main()
     wanted = handleConfigFile(cfgFile, wanted_defaultSettings, wanted)
 
     repeat wait(0) until isSampAvailable()
+    if wanted.updateInProgress then
+        formattedAddChatMessage(string.format("You have successfully upgraded from Version: %s to %s", wanted.lastVersion, scriptVersion), -1)
+        wanted.updateInProgress = false
+
+        local success, err = saveConfig(CfgFile, wanted)
+        if not success then print("Error saving config: " .. err) end
+    end
+    if wanted.autoCheckUpdate then checkForUpdate() end
 
     sampRegisterChatCommand('wanted.settings', function()
-        menu[0] = not menu[0]
+        if wanted.updateInProgress then
+            formattedAddChatMessage("Update in progress. Please wait a moment.", -1)
+            return
+        end
+        menu.settings[0] = not menu.settings[0]
     end)
 
     sampRegisterChatCommand('wanted', function()
-        if not wanted.enabled then sampSendChat("/wanted") return end
+        if not wanted.Enabled then sampSendChat("/wanted") return end
         sampAddChatMessage("__________WANTED LIST__________", 0xFF8000)
-        if wantedlist then
-            for _, v in pairs(wantedlist) do sampAddChatMessage(string.format("%s (%d): {b4b4b4}%d outstanding %s.", v.name, v.id, v.charges, v.charges == 1 and "charge" or "charges"), -1) end
-        else
+        if not wantedlist then
             sampAddChatMessage("No current wanted suspects.", -1)
+        else
+            for _, v in pairs(wantedlist) do
+                sampAddChatMessage(string.format("%s (%d): {b4b4b4}%d outstanding %s.", v.name, v.id, v.charges, v.charges == 1 and "charge" or "charges"), -1)
+            end
         end
         sampAddChatMessage("________________________________", 0xFF8000)
     end)
 
     while true do wait(0)
         if sampGetGamestate() ~= 3 and wantedlist then wantedlist = nil end
-        if wanted.enabled and wanted.timer <= localClock() - last_wanted then
+        if wanted.Enabled and wanted.Timer <= localClock() - last_wanted then
             sampSendChat("/wanted")
             last_wanted = localClock()
             commandSent = true
@@ -117,7 +146,7 @@ end
 
 function onScriptTerminate(scr, quitGame)
     if scr == script.this then
-        if wanted.autosave then
+        if wanted.AutoSave then
             local success, err = saveConfig(cfgFile, wanted)
             if not success then print("Error saving config: " .. err) end
         end
@@ -125,31 +154,31 @@ function onScriptTerminate(scr, quitGame)
 end
 
 function onWindowMessage(msg, wparam, lparam)
-    if wparam == VK_ESCAPE and menu[0] then
+    if wparam == VK_ESCAPE and menu.settings[0] then
         if msg == wm.WM_KEYDOWN then
             consumeWindowMessage(true, false)
         end
         if msg == wm.WM_KEYUP then
-            menu[0] = false
+            menu.settings[0] = false
         end
     end
 end
 
 function sampev.onShowTextDraw(id, data)
     if data.text:match("~r~Objects loading...") then
-        last_timer = wanted.timer
-        wanted.timer = 15
+        last_timer = wanted.Timer
+        wanted.Timer = 15
     end
 
     if data.text:match("~g~Objects loaded!") then
-        wanted.timer = last_timer
+        wanted.Timer = last_timer
     end
 end
 
 function sampev.onServerMessage(color, text)
-    if wanted.enabled or commandSent then
+    if wanted.Enabled or commandSent then
         if text:match("You're not a Lawyer / Cop / FBI!") and color == -1347440726 then
-            wanted.enabled = false
+            wanted.Enabled = false
         end
 
         local nickname = text:match("HQ: (.+) has been processed, was arrested.")
@@ -191,7 +220,7 @@ function sampev.onServerMessage(color, text)
         end
     else
         if ((text:match("LSPD MOTD: (.+)") or text:match("SASD MOTD: (.+)") or text:match("FBI MOTD: (.+)") or text:match("ARES MOTD: (.+)")) and not text:find("SMS:") and not text:find("Advertisement:") and color == -65366) or (text:match("%* You are now a Lawyer, type /help to see your new commands.") and color == 869072810) then
-            wanted.enabled = true
+            wanted.Enabled = true
         end
     end
 end
@@ -223,58 +252,49 @@ imgui.OnInitialize(function()
 end)
 
 imgui.OnFrame(function()
-    return wanted.enabled and not isPauseMenuActive() and not sampIsScoreboardOpen() and sampGetChatDisplayMode() > 0 and not isKeyDown(VK_F10)
+    return wanted.Enabled and not isPauseMenuActive() and not sampIsScoreboardOpen() and sampGetChatDisplayMode() > 0 and not isKeyDown(VK_F10)
 end,
 function()
-    local newX, newY, status = imgui.handleWindowDragging(wanted.windowpos, {x = wantedWindowSize.x / 2, y = wantedWindowSize.y / 2}, wantedWindowSize, menu[0])
-    if status then
-        wanted.windowpos.x, wanted.windowpos.y = newX, newY
-    end
-
-    imgui.SetNextWindowPos(imgui.ImVec2(wanted.windowpos.x, wanted.windowpos.y), imgui.Cond.Always, imgui.ImVec2(0.5, 0.5))
-    imgui.SetNextWindowSize(imgui.ImVec2(wantedWindowSize.x, wantedWindowSize.y), imgui.Cond.FirstUseEver)
-
+    local newPos, status = imgui.handleWindowDragging(wanted.WindowPos, {x = windowSize.x / 2, y = windowSize.y / 2}, windowSize, menu.settings[0])
+    if status then wanted.WindowPos = newPos end
+    imgui.SetNextWindowPos(wanted.WindowPos, imgui.Cond.Always, imgui.ImVec2(0.5, 0.5))
     imgui.PushStyleColor(imgui.Col.Border, imgui.ImVec4(0.110, 0.467, 0.702, 1.0))
     imgui.PushStyleVarFloat(imgui.StyleVar.WindowBorderSize, 2.0)
-
     if imgui.Begin(scriptName, nil, imgui.WindowFlags.NoDecoration + imgui.WindowFlags.AlwaysAutoResize) then
-        if wantedlist then
-            for _, v in pairs(wantedlist) do
-                if wanted.stars then
-                    imgui.TextColoredRGB(string.format("%s (%d): {%s}%s", v.name, v.id, v.charges == 6 and "FF0000FF" or "B4B4B4", string.rep(fa.STAR, v.charges)))
-                else
-                    imgui.TextColoredRGB(string.format("%s (%d): {%s}%d outstanding %s.", v.name, v.id, v.charges == 6 and "FF0000FF" or "B4B4B4", v.charges, v.charges == 1 and "charge" or "charges"))
-                end
-            end
-        else
+        if not wantedlist then
             imgui.TextColoredRGB("No current wanted suspects.")
+        else
+            for _, v in pairs(wantedlist) do
+                local stars = wanted.Stars and string.rep(fa.STAR, v.charges) or string.format("%d outstanding %s.", v.charges, v.charges == 1 and "charge" or "charges")
+                imgui.TextColoredRGB(string.format("%s (%d): {%s}%s", v.name, v.id, v.charges == 6 and "FF0000FF" or "B4B4B4", stars))
+            end
         end
-        wantedWindowSize = imgui.GetWindowSize()
+        windowSize = imgui.GetWindowSize()
     end
     imgui.PopStyleVar()
     imgui.PopStyleColor()
     imgui.End()
 end).HideCursor = true
 
-imgui.OnFrame(function() return menu[0] end,
+imgui.OnFrame(function() return menu.settings[0] end,
 function()
-    local title = string.format("%s %s Settings - Version: %s", fa.STAR, scriptName:gsub("^%l", string.upper), scriptVersion)
+    local title = string.format("%s %s Settings - Version: %s", fa.STAR, firstToUpper(scriptName), scriptVersion)
     local width, height = getScreenResolution()
     imgui.SetNextWindowPos(imgui.ImVec2(width / 2, height / 2), imgui.Cond.FirstUseEver, imgui.ImVec2(0.5, 0.5))
     imgui.PushStyleVarVec2(imgui.StyleVar.WindowPadding, imgui.ImVec2(0, 0))
-    imgui.Begin(title, menu, imgui.WindowFlags.NoResize + imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoScrollbar + imgui.WindowFlags.AlwaysAutoResize)
+    imgui.Begin(title, menu.settings, imgui.WindowFlags.NoResize + imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoScrollbar + imgui.WindowFlags.AlwaysAutoResize)
         imgui.BeginChild("##1", imgui.ImVec2(272, 41), true)
 
         imgui.SetCursorPos(imgui.ImVec2(0, 0))
         if imgui.CustomButtonWithTooltip(
             fa.POWER_OFF..'##1',
-            wanted.enabled and imgui.ImVec4(0.15, 0.59, 0.18, 0.7) or imgui.ImVec4(1, 0.19, 0.19, 0.5),
-            wanted.enabled and imgui.ImVec4(0.15, 0.59, 0.18, 0.5) or imgui.ImVec4(1, 0.19, 0.19, 0.3),
-            wanted.enabled and imgui.ImVec4(0.15, 0.59, 0.18, 0.4) or imgui.ImVec4(1, 0.19, 0.19, 0.2),
+            wanted.Enabled and imgui.ImVec4(0.15, 0.59, 0.18, 0.7) or imgui.ImVec4(1, 0.19, 0.19, 0.5),
+            wanted.Enabled and imgui.ImVec4(0.15, 0.59, 0.18, 0.5) or imgui.ImVec4(1, 0.19, 0.19, 0.3),
+            wanted.Enabled and imgui.ImVec4(0.15, 0.59, 0.18, 0.4) or imgui.ImVec4(1, 0.19, 0.19, 0.2),
             imgui.ImVec2(50.0, 40.0),
             "Toggle Wanted Menu"
         ) then
-            wanted.enabled = not wanted.enabled
+            wanted.Enabled = not wanted.Enabled
         end
 
         imgui.SetCursorPos(imgui.ImVec2(51, 0))
@@ -325,7 +345,7 @@ function()
             imgui.ImVec2(70.0, 40.0),
             'Check for update (Disabled)'
         ) then
-            -- add later
+            checkForUpdate()
         end
 
         imgui.EndChild()
@@ -333,25 +353,122 @@ function()
         imgui.SetCursorPos(imgui.ImVec2(0, 60))
         imgui.BeginChild("##2", imgui.ImVec2(272, 55), true)
 
-        if imgui.Checkbox('Stars', new.bool(wanted.stars)) then
-            wanted.stars = not wanted.stars
+        if imgui.Checkbox('Stars', new.bool(wanted.Stars)) then
+            wanted.Stars = not wanted.Stars
         end
         imgui.SameLine()
         imgui.PushItemWidth(50)
-        local timer = new.float[1](wanted.timer)
+        local timer = new.float[1](wanted.Timer)
         if imgui.DragFloat('Refresh Rate', timer, 1, 2, 10, "%.f") then
-            wanted.timer = timer[0]
+            wanted.Timer = timer[0]
         end
         imgui.PopItemWidth()
 
-        if imgui.Checkbox('Autosave', new.bool(wanted.autosave)) then
-            wanted.autosave = not wanted.autosave
+        if imgui.Checkbox('Autosave', new.bool(wanted.AutoSave)) then
+            wanted.AutoSave = not wanted.AutoSave
         end
 
         imgui.EndChild()
     imgui.PopStyleVar()
     imgui.End()
 end)
+
+local function handleButton(label, action, width)
+    width = width or 85
+    if imgui.CustomButton(label, imgui.ImVec4(0.16, 0.16, 0.16, 0.9), imgui.ImVec4(0.40, 0.12, 0.12, 1), imgui.ImVec4(0.30, 0.08, 0.08, 1), imgui.ImVec2(width, 45)) then
+        action()
+        status = false
+        menu.confirm[0] = false
+    end
+end
+
+imgui.OnFrame(function() return menu.confirm[0] end, function()
+    local io = imgui.GetIO()
+    local center = imgui.ImVec2(io.DisplaySize.x / 2, io.DisplaySize.y / 2)
+    imgui.SetNextWindowPos(center, imgui.Cond.FirstUseEver, imgui.ImVec2(0.5, 0.5))
+    imgui.Begin('', menu.confirm, imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoResize + imgui.WindowFlags.NoTitleBar + imgui.WindowFlags.AlwaysAutoResize)
+    if not imgui.IsWindowFocused() then imgui.SetNextWindowFocus() end
+    for n, t in pairs(confirmData) do
+        if t.status then
+            if n == 'update' then
+                imgui.Text('Do you want to update this script?')
+                handleButton(fa.CIRCLE_CHECK .. ' Update', function()
+                    updateScript()
+                    t.status = false
+                end)
+                imgui.SameLine()
+                handleButton(fa.CIRCLE_XMARK .. ' Cancel', function()
+                    t.status = false
+                end)
+            end
+        end
+    end
+    imgui.End()
+end)
+
+function checkForUpdate()
+	asyncHttpRequest('GET', updateUrl, nil,
+		function(response)
+            local updateVersion = response.text:match("version: (.+)")
+            if updateVersion and compareVersions(scriptVersion, updateVersion) == -1 then
+                confirmData['update'].status = true
+                menu.confirm[0] = true
+            end
+		end,
+		function(err)
+            print(err)
+		end
+	)
+end
+
+function updateScript()
+    wanted.updateInProgress = true
+    wanted.lastVersion = scriptVersion
+    downloadFiles({{url = scriptUrl, path = scriptPath, replace = true}}, function(result)
+        if result then
+            formattedAddChatMessage("Update downloaded successfully! Reloading the script now.", -1)
+            thisScript():reload()
+        end
+    end)
+end
+
+function formattedAddChatMessage(string, color)
+    sampAddChatMessage(string.format("{ABB2B9}[%s]{FFFFFF} %s", firstToUpper(scriptName), string), color)
+end
+
+function firstToUpper(string)
+    return (string:gsub("^%l", string.upper))
+end
+
+function downloadFiles(table, onCompleteCallback)
+    local downloadsInProgress = 0
+    local downloadsStarted = false
+    local callbackCalled = false
+
+    local function download_handler(id, status, p1, p2)
+        if status == dlstatus.STATUS_ENDDOWNLOADDATA then
+            downloadsInProgress = downloadsInProgress - 1
+        end
+
+        if downloadsInProgress == 0 and onCompleteCallback and not callbackCalled then
+            callbackCalled = true
+            onCompleteCallback(downloadsStarted)
+        end
+    end
+
+    for _, file in ipairs(table) do
+        if not doesFileExist(file.path) or file.replace then
+            downloadsInProgress = downloadsInProgress + 1
+            downloadsStarted = true
+            downloadUrlToFile(file.url, file.path, download_handler)
+        end
+    end
+
+    if not downloadsStarted and onCompleteCallback and not callbackCalled then
+        callbackCalled = true
+        onCompleteCallback(downloadsStarted)
+    end
+end
 
 function loadConfig(filePath)
     local file = io.open(filePath, "r")
@@ -441,24 +558,75 @@ function ensureDefaults(config, defaults, reset, ignoreKeys)
     return status
 end
 
+function asyncHttpRequest(method, url, args, resolve, reject)
+    local request_thread = effil.thread(function (method, url, args)
+        local requests = require 'requests'
+        local result, response = pcall(requests.request, method, url, args)
+        if result then
+            response.json, response.xml = nil, nil
+            return true, response
+        else
+            return false, response
+        end
+    end)(method, url, args)
+    if not resolve then resolve = function() end end
+    if not reject then reject = function() end end
+    lua_thread.create(function()
+        local runner = request_thread
+        while true do
+            local status, err = runner:status()
+            if not err then
+                if status == 'completed' then
+                    local result, response = runner:get()
+                    if result then
+                        resolve(response)
+                    else
+                        reject(response)
+                    end
+                    return
+                elseif status == 'canceled' then
+                    return reject(status)
+                end
+            else
+                return reject(err)
+            end
+            wait(0)
+        end
+    end)
+end
+
+function compareVersions(version1, version2)
+    local function parseVersion(version)
+        local major, minor, patch = version:match("(%d+)%.?(%d*)%.?(%d*)")
+        return tonumber(major) or 0, tonumber(minor) or 0, tonumber(patch) or 0
+    end
+
+    local major1, minor1, patch1 = parseVersion(version1)
+    local major2, minor2, patch2 = parseVersion(version2)
+    if major1 ~= major2 then return (major1 > major2) and 1 or -1 end
+    if minor1 ~= minor2 then return (minor1 > minor2) and 1 or -1 end
+    if patch1 ~= patch2 then return (patch1 > patch2) and 1 or -1 end
+    return 0
+end
+
 function imgui.handleWindowDragging(pos, offset, size, menu)
-    if not menu then return pos.x, pos.y, false end
+    if not menu then return {x = pos.x, y = pos.y}, false end
     local mpos = imgui.GetMousePos()
     if mpos.x + offset.x >= pos.x and mpos.x <= pos.x + size.x - offset.x and mpos.y + offset.y >= pos.y and mpos.y <= pos.y + size.y - offset.y then
         if imgui.IsMouseClicked(0) then
             selectedbox = true
-            wantedWindowOffset.x = mpos.x - pos.x
-            wantedWindowOffset.y = mpos.y - pos.y
+            tempOffset.x = mpos.x - pos.x
+            tempOffset.y = mpos.y - pos.y
         end
     end
     if selectedbox then
         if imgui.IsMouseReleased(0) then
             selectedbox = false
         else
-            return mpos.x - wantedWindowOffset.x, mpos.y - wantedWindowOffset.y, true
+            return {x = mpos.x - tempOffset.x, y = mpos.y - tempOffset.y}, true
         end
     end
-    return pos.x, pos.y, false
+    return {x = pos.x, y = pos.y}, false
 end
 
 function convertColor(color, normalize, includeAlpha, hexColor)
