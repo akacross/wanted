@@ -1,6 +1,6 @@
 script_name("wanted")
 script_author("akacross")
-script_version("0.5.22")
+script_version("0.5.23")
 script_url("https://akacross.net/")
 
 local scriptPath = thisScript().path
@@ -108,7 +108,7 @@ function main()
         formattedAddChatMessage(string.format("You have successfully upgraded from Version: %s to %s", wanted.lastVersion, scriptVersion), -1)
         wanted.updateInProgress = false
 
-        local success, err = saveConfig(CfgFile, wanted)
+        local success, err = saveConfig(cfgFile, wanted)
         if not success then print("Error saving config: " .. err) end
     end
     if wanted.autoCheckUpdate then checkForUpdate() end
