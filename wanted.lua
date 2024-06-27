@@ -239,7 +239,9 @@ imgui.OnInitialize(function()
         "FLOPPY_DISK",
         "REPEAT",
         "ERASER",
-        "RETWEET"
+        "RETWEET",
+	"CIRCLE_CHECK",
+	"CIRCLE_XMARK"
     }
     for _, b in ipairs(list) do
         builder:AddText(fa(b))
