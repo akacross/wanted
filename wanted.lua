@@ -36,13 +36,7 @@ local wanted_defaultSettings = {
 }
 
 local ped, h = playerPed, playerHandle
-local wantedlist = nil--[[{
-    {name = "Moorice_Nigger", id = 22, charges = 6},
-    {name = "Dwayne_Forest_Mother", id = 666, charges = 5},
-    {name = "Allen_Lynch", id = 99, charges = 2},
-    {name = "Leon_Black", id = 101, charges = 1},
-    {name = "Athos_Jew", id = 69, charges = 3}
-}]]
+local wantedlist = nil
 local last_wanted = 0
 local last_timer = nil
 local commandSent = false
