@@ -1,6 +1,6 @@
 script_name("wanted")
 script_author("akacross")
-script_version("0.5.23")
+script_version("0.5.24")
 script_url("https://akacross.net/")
 
 local scriptPath = thisScript().path
@@ -240,8 +240,8 @@ imgui.OnInitialize(function()
         "REPEAT",
         "ERASER",
         "RETWEET",
-	"CIRCLE_CHECK",
-	"CIRCLE_XMARK"
+        "CIRCLE_CHECK",
+        "CIRCLE_XMARK"
     }
     for _, b in ipairs(list) do
         builder:AddText(fa(b))
@@ -345,7 +345,7 @@ function()
             imgui.ImVec4(mainc.x, mainc.y, mainc.z, 0.5),
             imgui.ImVec4(mainc.x, mainc.y, mainc.z, 1),
             imgui.ImVec2(70.0, 40.0),
-            'Check for update (Disabled)'
+            'Check for update)'
         ) then
             checkForUpdate()
         end
@@ -366,7 +366,11 @@ function()
         end
         imgui.PopItemWidth()
 
-        if imgui.Checkbox('Autosave', new.bool(wanted.AutoSave)) then
+        if imgui.Checkbox('Auto-Update', new.bool(wanted.autoCheckUpdate)) then
+            wanted.autoCheckUpdate = not wanted.autoCheckUpdate
+        end
+        imgui.SameLine()
+        if imgui.Checkbox('Auto-Save', new.bool(wanted.AutoSave)) then
             wanted.AutoSave = not wanted.AutoSave
         end
 
