@@ -1,6 +1,6 @@
 script_name("wanted")
 script_author("akacross")
-script_version("0.5.16")
+script_version("0.5.21")
 script_url("https://akacross.net/")
 
 local scriptPath = thisScript().path
@@ -28,22 +28,30 @@ local cfgFile = configDir .. 'wanted.json'
 
 local wanted = {}
 local wanted_defaultSettings = {
-	autosave = true,
-	enabled = true,
-	timer = 5,
-	windowpos = {500, 500}
+    autosave = true,
+    enabled = true,
+    stars = false,
+    timer = 5,
+    windowpos = {x = 500, y = 500}
 }
 
 local ped, h = playerPed, playerHandle
-local wantedlist = nil
+local wantedlist = nil--[[{
+    {name = "Moorice_Nigger", id = 22, charges = 6},
+    {name = "Dwayne_Forest_Mother", id = 666, charges = 5},
+    {name = "Allen_Lynch", id = 99, charges = 2},
+    {name = "Leon_Black", id = 101, charges = 1},
+    {name = "Athos_Jew", id = 69, charges = 3}
+}]]
 local last_wanted = 0
+local last_timer = nil
+local commandSent = false
 
 local new, str, sizeof = imgui.new, ffi.string, ffi.sizeof
 local menu = new.bool(false)
 local mainc = imgui.ImVec4(0.98, 0.26, 0.26, 1.00)
-local offsetX = 0
-local offsetY = 0
-local size = {{x = 0, y = 0}}
+local wantedWindowSize = {x = 0, y = 0}
+local wantedWindowOffset = {x = 0, y = 0}
 local selectedbox = false
 
 local function handleConfigFile(path, defaults, configVar, ignoreKeys)
@@ -83,35 +91,47 @@ local function handleConfigFile(path, defaults, configVar, ignoreKeys)
 end
 
 function main()
-	createDirectory(configDir)
-	wanted = handleConfigFile(cfgFile, wanted_defaultSettings, wanted)
+    createDirectory(configDir)
+    wanted = handleConfigFile(cfgFile, wanted_defaultSettings, wanted)
 
-	repeat wait(0) until isSampAvailable()
+    repeat wait(0) until isSampAvailable()
 
-	sampRegisterChatCommand('wanted.settings', function()
+    sampRegisterChatCommand('wanted.settings', function()
         menu[0] = not menu[0]
     end)
 
-	while true do wait(0)
-		if sampGetGamestate() ~= 3 and wantedlist then wantedlist = nil end
-		if wanted.enabled and wanted.timer <= localClock() - last_wanted then
-			sampSendChat("/wanted")
-			last_wanted = localClock()
-		end
-	end
+    sampRegisterChatCommand('wanted', function()
+        if not wanted.enabled then sampSendChat("/wanted") return end
+        sampAddChatMessage("__________WANTED LIST__________", 0xFF8000)
+        if wantedlist then
+            for _, v in pairs(wantedlist) do sampAddChatMessage(string.format("%s (%d): {b4b4b4}%d outstanding %s.", v.name, v.id, v.charges, v.charges == 1 and "charge" or "charges"), -1) end
+        else
+            sampAddChatMessage("No current wanted suspects.", -1)
+        end
+        sampAddChatMessage("________________________________", 0xFF8000)
+    end)
+
+    while true do wait(0)
+        if sampGetGamestate() ~= 3 and wantedlist then wantedlist = nil end
+        if wanted.enabled and wanted.timer <= localClock() - last_wanted then
+            sampSendChat("/wanted")
+            last_wanted = localClock()
+            commandSent = true
+        end
+    end
 end
 
 function onScriptTerminate(scr, quitGame)
-	if scr == script.this then
-		if wanted.autosave then
-			local success, err = saveConfig(cfgFile, wanted)
+    if scr == script.this then
+        if wanted.autosave then
+            local success, err = saveConfig(cfgFile, wanted)
             if not success then print("Error saving config: " .. err) end
-		end
-	end
+        end
+    end
 end
 
 function onWindowMessage(msg, wparam, lparam)
-	if wparam == VK_ESCAPE and menu[0] then
+    if wparam == VK_ESCAPE and menu[0] then
         if msg == wm.WM_KEYDOWN then
             consumeWindowMessage(true, false)
         end
@@ -121,106 +141,134 @@ function onWindowMessage(msg, wparam, lparam)
     end
 end
 
+function sampev.onShowTextDraw(id, data)
+    if data.text:match("~r~Objects loading...") then
+        last_timer = wanted.timer
+        wanted.timer = 15
+    end
+
+    if data.text:match("~g~Objects loaded!") then
+        wanted.timer = last_timer
+    end
+end
+
 function sampev.onServerMessage(color, text)
-    if wanted.enabled then
-        if text:match("You're not a Lawyer / Cop / FBI!") then
+    if wanted.enabled or commandSent then
+        if text:match("You're not a Lawyer / Cop / FBI!") and color == -1347440726 then
             wanted.enabled = false
-            return false
         end
 
-        if text:match("__________WANTED LIST__________") then
-            -- Clear the existing wanted list when the wanted list header is detected
-            wantedlist = {}
-            return false
+        local nickname = text:match("HQ: (.+) has been processed, was arrested.")
+        if nickname and wantedlist and color == 641859242 then
+            for k, v in pairs(wantedlist) do
+                if v.name:match(nickname) then
+                    table.remove(wantedlist, k)
+                end
+            end
         end
 
-        if text:match("________________________________") and string.len(text) == 32 then return false end
+        if color == -8388353 then
+            if text:match("__________WANTED LIST__________") then
+                wantedlist = nil
+                return false
+            end
 
-        if text:match("No current wanted suspects.") then
-            wantedlist = nil
-            return false
+            if text:match("________________________________") then
+                commandSent = false
+                return false
+            end
         end
 
-        local nickname, playerid, charges = text:match("(.+) %((%d+)%): %{b4b4b4%}(%d+) outstanding charge[s]?%.")
-        if nickname and playerid and charges then
-            table.insert(wantedlist, {
-                name = nickname,
-                id = playerid,
-                charges = charges
-            })
-            return false
+        if color == -86 then
+            if text:match("No current wanted suspects.") then
+                return false
+            end
+
+            local nickname, playerid, charges = text:match("(.+) %((%d+)%): %{b4b4b4%}(%d+) outstanding charge[s]?%.")
+            if nickname and playerid and charges then
+                wantedlist = wantedlist or {}
+                table.insert(wantedlist, {
+                    name = nickname,
+                    id = tonumber(playerid),
+                    charges = tonumber(charges)
+                })
+                return false
+            end
+        end
+    else
+        if ((text:match("LSPD MOTD: (.+)") or text:match("SASD MOTD: (.+)") or text:match("FBI MOTD: (.+)") or text:match("ARES MOTD: (.+)")) and not text:find("SMS:") and not text:find("Advertisement:") and color == -65366) or (text:match("%* You are now a Lawyer, type /help to see your new commands.") and color == 869072810) then
+            wanted.enabled = true
         end
     end
 end
 
 imgui.OnInitialize(function()
-	apply_custom_style()
-	
-	local config = imgui.ImFontConfig()
-	config.MergeMode = true
+    apply_custom_style()
+
+    local config = imgui.ImFontConfig()
+    config.MergeMode = true
     config.PixelSnapH = true
     config.GlyphMinAdvanceX = 14
     local builder = imgui.ImFontGlyphRangesBuilder()
     local list = {
-		"POWER_OFF",
-		"FLOPPY_DISK",
-		"REPEAT",
-		"ERASER",
-		"RETWEET",
-		"STAR"
-	}
-	for _, b in ipairs(list) do
-		builder:AddText(fa(b))
-	end
-	defaultGlyphRanges1 = imgui.ImVector_ImWchar()
-	builder:BuildRanges(defaultGlyphRanges1)
-	imgui.GetIO().Fonts:AddFontFromMemoryCompressedBase85TTF(fa.get_font_data_base85("solid"), 14, config, defaultGlyphRanges1[0].Data)
-	
-	imgui.GetIO().IniFilename = nil
+        "STAR",
+        "POWER_OFF",
+        "FLOPPY_DISK",
+        "REPEAT",
+        "ERASER",
+        "RETWEET"
+    }
+    for _, b in ipairs(list) do
+        builder:AddText(fa(b))
+    end
+    defaultGlyphRanges1 = imgui.ImVector_ImWchar()
+    builder:BuildRanges(defaultGlyphRanges1)
+    imgui.GetIO().Fonts:AddFontFromMemoryCompressedBase85TTF(fa.get_font_data_base85("solid"), 14, config, defaultGlyphRanges1[0].Data)
+
+    imgui.GetIO().IniFilename = nil
 end)
 
-imgui.OnFrame(function() return wanted.enabled and not isPauseMenuActive() and not sampIsScoreboardOpen() and sampGetChatDisplayMode() > 0 and not isKeyDown(VK_F10) end,
+imgui.OnFrame(function()
+    return wanted.enabled and not isPauseMenuActive() and not sampIsScoreboardOpen() and sampGetChatDisplayMode() > 0 and not isKeyDown(VK_F10)
+end,
 function()
-	if menu[0] then
-		local mpos = imgui.GetMousePos()
-		if mpos.x >= wanted.windowpos[1] and
-		mpos.x <= wanted.windowpos[1] + size.x and
-		mpos.y >= wanted.windowpos[2] and
-		mpos.y <= wanted.windowpos[2] + size.y then
-			if imgui.IsMouseClicked(0) then
-				selectedbox = true
-				offsetX = mpos.x - wanted.windowpos[1]
-				offsetY = mpos.y - wanted.windowpos[2]
-			end
-		end
-		if selectedbox then
-			if imgui.IsMouseReleased(0) then
-				selectedbox = false
-			else
-				wanted.windowpos[1] = mpos.x - offsetX
-				wanted.windowpos[2] = mpos.y - offsetY
-			end
-		end
-	end
-	imgui.SetNextWindowPos(imgui.ImVec2(wanted.windowpos[1], wanted.windowpos[2]), imgui.Cond.Always)
-	imgui.Begin(script.this.name, nil, imgui.WindowFlags.NoTitleBar + imgui.WindowFlags.NoResize + imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoMove + imgui.WindowFlags.NoScrollbar + imgui.WindowFlags.AlwaysAutoResize)
-		if wantedlist then
-			for _, v in pairs(wantedlist) do
-				imgui.Text(string.format("%s(%s): %s outstanding charges.", v.name, v.id, v.charges))
-			end
-		else
-			imgui.Text("No current wanted suspects.")
-		end
-		size = imgui.GetWindowSize()
-	imgui.End()
+    local newX, newY, status = imgui.handleWindowDragging(wanted.windowpos, {x = wantedWindowSize.x / 2, y = wantedWindowSize.y / 2}, wantedWindowSize, menu[0])
+    if status then
+        wanted.windowpos.x, wanted.windowpos.y = newX, newY
+    end
+
+    imgui.SetNextWindowPos(imgui.ImVec2(wanted.windowpos.x, wanted.windowpos.y), imgui.Cond.Always, imgui.ImVec2(0.5, 0.5))
+    imgui.SetNextWindowSize(imgui.ImVec2(wantedWindowSize.x, wantedWindowSize.y), imgui.Cond.FirstUseEver)
+
+    imgui.PushStyleColor(imgui.Col.Border, imgui.ImVec4(0.110, 0.467, 0.702, 1.0))
+    imgui.PushStyleVarFloat(imgui.StyleVar.WindowBorderSize, 2.0)
+
+    if imgui.Begin(scriptName, nil, imgui.WindowFlags.NoDecoration + imgui.WindowFlags.AlwaysAutoResize) then
+        if wantedlist then
+            for _, v in pairs(wantedlist) do
+                if wanted.stars then
+                    imgui.TextColoredRGB(string.format("%s (%d): {%s}%s", v.name, v.id, v.charges == 6 and "FF0000FF" or "B4B4B4", string.rep(fa.STAR, v.charges)))
+                else
+                    imgui.TextColoredRGB(string.format("%s (%d): {%s}%d outstanding %s.", v.name, v.id, v.charges == 6 and "FF0000FF" or "B4B4B4", v.charges, v.charges == 1 and "charge" or "charges"))
+                end
+            end
+        else
+            imgui.TextColoredRGB("No current wanted suspects.")
+        end
+        wantedWindowSize = imgui.GetWindowSize()
+    end
+    imgui.PopStyleVar()
+    imgui.PopStyleColor()
+    imgui.End()
 end).HideCursor = true
---imgui.SetCursorPos(imgui.ImVec2(5, 203))
+
 imgui.OnFrame(function() return menu[0] end,
 function()
+    local title = string.format("%s %s Settings - Version: %s", fa.STAR, scriptName:gsub("^%l", string.upper), scriptVersion)
     local width, height = getScreenResolution()
-    imgui.SetNextWindowPos(imgui.ImVec2(width / 2, height / 2), imgui.Cond.Always, imgui.ImVec2(0.5, 0.5))
+    imgui.SetNextWindowPos(imgui.ImVec2(width / 2, height / 2), imgui.Cond.FirstUseEver, imgui.ImVec2(0.5, 0.5))
     imgui.PushStyleVarVec2(imgui.StyleVar.WindowPadding, imgui.ImVec2(0, 0))
-    imgui.Begin(string.format("%s %s Settings - Version: %s", fa.STAR, scriptName, scriptVersion), menu, imgui.WindowFlags.NoResize + imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoScrollbar + imgui.WindowFlags.AlwaysAutoResize)
+    imgui.Begin(title, menu, imgui.WindowFlags.NoResize + imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoScrollbar + imgui.WindowFlags.AlwaysAutoResize)
         imgui.BeginChild("##1", imgui.ImVec2(272, 41), true)
 
         imgui.SetCursorPos(imgui.ImVec2(0, 0))
@@ -290,6 +338,17 @@ function()
 
         imgui.SetCursorPos(imgui.ImVec2(0, 60))
         imgui.BeginChild("##2", imgui.ImVec2(272, 55), true)
+
+        if imgui.Checkbox('Stars', new.bool(wanted.stars)) then
+            wanted.stars = not wanted.stars
+        end
+        imgui.SameLine()
+        imgui.PushItemWidth(50)
+        local timer = new.float[1](wanted.timer)
+        if imgui.DragFloat('Refresh Rate', timer, 1, 2, 10, "%.f") then
+            wanted.timer = timer[0]
+        end
+        imgui.PopItemWidth()
 
         if imgui.Checkbox('Autosave', new.bool(wanted.autosave)) then
             wanted.autosave = not wanted.autosave
@@ -388,6 +447,121 @@ function ensureDefaults(config, defaults, reset, ignoreKeys)
     return status
 end
 
+function imgui.handleWindowDragging(pos, offset, size, menu)
+    if not menu then return pos.x, pos.y, false end
+    local mpos = imgui.GetMousePos()
+    if mpos.x + offset.x >= pos.x and mpos.x <= pos.x + size.x - offset.x and mpos.y + offset.y >= pos.y and mpos.y <= pos.y + size.y - offset.y then
+        if imgui.IsMouseClicked(0) then
+            selectedbox = true
+            wantedWindowOffset.x = mpos.x - pos.x
+            wantedWindowOffset.y = mpos.y - pos.y
+        end
+    end
+    if selectedbox then
+        if imgui.IsMouseReleased(0) then
+            selectedbox = false
+        else
+            return mpos.x - wantedWindowOffset.x, mpos.y - wantedWindowOffset.y, true
+        end
+    end
+    return pos.x, pos.y, false
+end
+
+function convertColor(color, normalize, includeAlpha, hexColor)
+    local r = bit.band(bit.rshift(color, 16), 0xFF)
+    local g = bit.band(bit.rshift(color, 8), 0xFF)
+    local b = bit.band(color, 0xFF)
+    local a = bit.band(bit.rshift(color, 24), 0xFF)
+
+    if normalize then
+        r, g, b, a = r / 255, g / 255, b / 255, a / 255
+    end
+
+    if hexColor then
+        if includeAlpha then
+            return string.format("%02X%02X%02X%02X", a, r, g, b)
+        else
+            return string.format("%02X%02X%02X", r, g, b)
+        end
+    else
+        if includeAlpha then
+            return r, g, b, a
+        else
+            return r, g, b
+        end
+    end
+end
+
+function joinARGB(a, r, g, b, normalized)
+    if normalized then
+        a, r, g, b = math.floor(a * 255), math.floor(r * 255), math.floor(g * 255), math.floor(b * 255)
+    end
+    return bit.bor(bit.lshift(a, 24), bit.lshift(r, 16), bit.lshift(g, 8), b)
+end
+
+function imgui.TextColoredRGB(text)
+    local style = imgui.GetStyle()
+    local colors = style.Colors
+    local col = imgui.Col
+
+    local function designText(text__)
+        local pos = imgui.GetCursorPos()
+        if sampGetChatDisplayMode() == 2 then
+            for i = 1, 1 --[[Shadow degree]] do
+                imgui.SetCursorPos(imgui.ImVec2(pos.x + i, pos.y))
+                imgui.TextColored(imgui.ImVec4(0, 0, 0, 1), text__) -- shadow
+                imgui.SetCursorPos(imgui.ImVec2(pos.x - i, pos.y))
+                imgui.TextColored(imgui.ImVec4(0, 0, 0, 1), text__) -- shadow
+                imgui.SetCursorPos(imgui.ImVec2(pos.x, pos.y + i))
+                imgui.TextColored(imgui.ImVec4(0, 0, 0, 1), text__) -- shadow
+                imgui.SetCursorPos(imgui.ImVec2(pos.x, pos.y - i))
+                imgui.TextColored(imgui.ImVec4(0, 0, 0, 1), text__) -- shadow
+            end
+        end
+        imgui.SetCursorPos(pos)
+    end
+
+    -- Ensure color codes are in the form of {RRGGBBAA}
+    text = text:gsub('{(%x%x%x%x%x%x)}', '{%1FF}')
+
+    local color = colors[col.Text]
+    local start = 1
+    local a, b = text:find('{........}', start)
+
+    while a do
+        local t = text:sub(start, a - 1)
+        if #t > 0 then
+            designText(t)
+            imgui.TextColored(color, t)
+            imgui.SameLine(nil, 0)
+        end
+
+        local clr = text:sub(a + 1, b - 1)
+        if clr:upper() == 'STANDART' then
+            color = colors[col.Text]
+        else
+            clr = tonumber(clr, 16)
+            if clr then
+                local r = bit.band(bit.rshift(clr, 24), 0xFF)
+                local g = bit.band(bit.rshift(clr, 16), 0xFF)
+                local b = bit.band(bit.rshift(clr, 8), 0xFF)
+                local a = bit.band(clr, 0xFF)
+                color = imgui.ImVec4(r / 255, g / 255, b / 255, a / 255)
+            end
+        end
+
+        start = b + 1
+        a, b = text:find('{........}', start)
+    end
+
+    imgui.NewLine()
+    if #text >= start then
+        imgui.SameLine(nil, 0)
+        designText(text:sub(start))
+        imgui.TextColored(color, text:sub(start))
+    end
+end
+
 function imgui.CustomButtonWithTooltip(name, color, colorHovered, colorActive, size, tooltip)
     local clr = imgui.Col
     imgui.PushStyleColor(clr.Button, color)
@@ -405,67 +579,67 @@ function imgui.CustomButtonWithTooltip(name, color, colorHovered, colorActive, s
 end
 
 function apply_custom_style()
-	imgui.SwitchContext()
-	local ImVec4 = imgui.ImVec4
-	local ImVec2 = imgui.ImVec2
-	local style = imgui.GetStyle()
-	style.WindowRounding = 0
-	style.WindowPadding = ImVec2(8, 8)
-	style.WindowTitleAlign = ImVec2(0.5, 0.5)
-	style.FrameRounding = 0
-	style.ItemSpacing = ImVec2(8, 4)
-	style.ScrollbarSize = 10
-	style.ScrollbarRounding = 3
-	style.GrabMinSize = 10
-	style.GrabRounding = 0
-	style.Alpha = 1
-	style.FramePadding = ImVec2(4, 3)
-	style.ItemInnerSpacing = ImVec2(4, 4)
-	style.TouchExtraPadding = ImVec2(0, 0)
-	style.IndentSpacing = 21
-	style.ColumnsMinSpacing = 6
-	style.ButtonTextAlign = ImVec2(0.5, 0.5)
-	style.DisplayWindowPadding = ImVec2(22, 22)
-	style.DisplaySafeAreaPadding = ImVec2(4, 4)
-	style.AntiAliasedLines = true
-	style.CurveTessellationTol = 1.25
-	local colors = style.Colors
-	local clr = imgui.Col
-	colors[clr.FrameBg]                = ImVec4(0.48, 0.16, 0.16, 0.54)
-	colors[clr.FrameBgHovered]         = ImVec4(0.98, 0.26, 0.26, 0.40)
-	colors[clr.FrameBgActive]          = ImVec4(0.98, 0.26, 0.26, 0.67)
-	colors[clr.TitleBg]                = ImVec4(0.04, 0.04, 0.04, 1.00)
-	colors[clr.TitleBgActive]          = ImVec4(0.48, 0.16, 0.16, 1.00)
-	colors[clr.TitleBgCollapsed]       = ImVec4(0.00, 0.00, 0.00, 0.51)
-	colors[clr.CheckMark]              = ImVec4(0.98, 0.26, 0.26, 1.00)
-	colors[clr.SliderGrab]             = ImVec4(0.88, 0.26, 0.24, 1.00)
-	colors[clr.SliderGrabActive]       = ImVec4(0.98, 0.26, 0.26, 1.00)
-	colors[clr.Button]                 = ImVec4(0.98, 0.26, 0.26, 0.40)
-	colors[clr.ButtonHovered]          = ImVec4(0.98, 0.26, 0.26, 1.00)
-	colors[clr.ButtonActive]           = ImVec4(0.98, 0.06, 0.06, 1.00)
-	colors[clr.Header]                 = ImVec4(0.98, 0.26, 0.26, 0.31)
-	colors[clr.HeaderHovered]          = ImVec4(0.98, 0.26, 0.26, 0.80)
-	colors[clr.HeaderActive]           = ImVec4(0.98, 0.26, 0.26, 1.00)
-	colors[clr.Separator]              = colors[clr.Border]
-	colors[clr.SeparatorHovered]       = ImVec4(0.75, 0.10, 0.10, 0.78)
-	colors[clr.SeparatorActive]        = ImVec4(0.75, 0.10, 0.10, 1.00)
-	colors[clr.ResizeGrip]             = ImVec4(0.98, 0.26, 0.26, 0.25)
-	colors[clr.ResizeGripHovered]      = ImVec4(0.98, 0.26, 0.26, 0.67)
-	colors[clr.ResizeGripActive]       = ImVec4(0.98, 0.26, 0.26, 0.95)
-	colors[clr.TextSelectedBg]         = ImVec4(0.98, 0.26, 0.26, 0.35)
-	colors[clr.Text]                   = ImVec4(1.00, 1.00, 1.00, 1.00)
-	colors[clr.TextDisabled]           = ImVec4(0.50, 0.50, 0.50, 1.00)
-	colors[clr.WindowBg]               = ImVec4(0.06, 0.06, 0.06, 0.94)
-	colors[clr.PopupBg]                = ImVec4(0.08, 0.08, 0.08, 0.94)
-	colors[clr.Border]                 = ImVec4(0.43, 0.43, 0.50, 0.50)
-	colors[clr.BorderShadow]           = ImVec4(0.00, 0.00, 0.00, 0.00)
-	colors[clr.MenuBarBg]              = ImVec4(0.14, 0.14, 0.14, 1.00)
-	colors[clr.ScrollbarBg]            = ImVec4(0.02, 0.02, 0.02, 0.53)
-	colors[clr.ScrollbarGrab]          = ImVec4(0.31, 0.31, 0.31, 1.00)
-	colors[clr.ScrollbarGrabHovered]   = ImVec4(0.41, 0.41, 0.41, 1.00)
-	colors[clr.ScrollbarGrabActive]    = ImVec4(0.51, 0.51, 0.51, 1.00)
-	colors[clr.PlotLines]              = ImVec4(0.61, 0.61, 0.61, 1.00)
-	colors[clr.PlotLinesHovered]       = ImVec4(1.00, 0.43, 0.35, 1.00)
-	colors[clr.PlotHistogram]          = ImVec4(0.90, 0.70, 0.00, 1.00)
-	colors[clr.PlotHistogramHovered]   = ImVec4(1.00, 0.60, 0.00, 1.00)
+    imgui.SwitchContext()
+    local ImVec4 = imgui.ImVec4
+    local ImVec2 = imgui.ImVec2
+    local style = imgui.GetStyle()
+    style.WindowRounding = 0
+    style.WindowPadding = ImVec2(8, 8)
+    style.WindowTitleAlign = ImVec2(0.5, 0.5)
+    style.FrameRounding = 0
+    style.ItemSpacing = ImVec2(8, 4)
+    style.ScrollbarSize = 10
+    style.ScrollbarRounding = 3
+    style.GrabMinSize = 10
+    style.GrabRounding = 0
+    style.Alpha = 1
+    style.FramePadding = ImVec2(4, 3)
+    style.ItemInnerSpacing = ImVec2(4, 4)
+    style.TouchExtraPadding = ImVec2(0, 0)
+    style.IndentSpacing = 21
+    style.ColumnsMinSpacing = 6
+    style.ButtonTextAlign = ImVec2(0.5, 0.5)
+    style.DisplayWindowPadding = ImVec2(22, 22)
+    style.DisplaySafeAreaPadding = ImVec2(4, 4)
+    style.AntiAliasedLines = true
+    style.CurveTessellationTol = 1.25
+    local colors = style.Colors
+    local clr = imgui.Col
+    colors[clr.FrameBg]                = ImVec4(0.48, 0.16, 0.16, 0.54)
+    colors[clr.FrameBgHovered]         = ImVec4(0.98, 0.26, 0.26, 0.40)
+    colors[clr.FrameBgActive]          = ImVec4(0.98, 0.26, 0.26, 0.67)
+    colors[clr.TitleBg]                = ImVec4(0.04, 0.04, 0.04, 1.00)
+    colors[clr.TitleBgActive]          = ImVec4(0.48, 0.16, 0.16, 1.00)
+    colors[clr.TitleBgCollapsed]       = ImVec4(0.00, 0.00, 0.00, 0.51)
+    colors[clr.CheckMark]              = ImVec4(0.98, 0.26, 0.26, 1.00)
+    colors[clr.SliderGrab]             = ImVec4(0.88, 0.26, 0.24, 1.00)
+    colors[clr.SliderGrabActive]       = ImVec4(0.98, 0.26, 0.26, 1.00)
+    colors[clr.Button]                 = ImVec4(0.98, 0.26, 0.26, 0.40)
+    colors[clr.ButtonHovered]          = ImVec4(0.98, 0.26, 0.26, 1.00)
+    colors[clr.ButtonActive]           = ImVec4(0.98, 0.06, 0.06, 1.00)
+    colors[clr.Header]                 = ImVec4(0.98, 0.26, 0.26, 0.31)
+    colors[clr.HeaderHovered]          = ImVec4(0.98, 0.26, 0.26, 0.80)
+    colors[clr.HeaderActive]           = ImVec4(0.98, 0.26, 0.26, 1.00)
+    colors[clr.Separator]              = colors[clr.Border]
+    colors[clr.SeparatorHovered]       = ImVec4(0.75, 0.10, 0.10, 0.78)
+    colors[clr.SeparatorActive]        = ImVec4(0.75, 0.10, 0.10, 1.00)
+    colors[clr.ResizeGrip]             = ImVec4(0.98, 0.26, 0.26, 0.25)
+    colors[clr.ResizeGripHovered]      = ImVec4(0.98, 0.26, 0.26, 0.67)
+    colors[clr.ResizeGripActive]       = ImVec4(0.98, 0.26, 0.26, 0.95)
+    colors[clr.TextSelectedBg]         = ImVec4(0.98, 0.26, 0.26, 0.35)
+    colors[clr.Text]                   = ImVec4(1.00, 1.00, 1.00, 1.00)
+    colors[clr.TextDisabled]           = ImVec4(0.50, 0.50, 0.50, 1.00)
+    colors[clr.WindowBg]               = ImVec4(0.06, 0.06, 0.06, 0.94)
+    colors[clr.PopupBg]                = ImVec4(0.08, 0.08, 0.08, 0.94)
+    colors[clr.Border]                 = ImVec4(0.43, 0.43, 0.50, 0.50)
+    colors[clr.BorderShadow]           = ImVec4(0.00, 0.00, 0.00, 0.00)
+    colors[clr.MenuBarBg]              = ImVec4(0.14, 0.14, 0.14, 1.00)
+    colors[clr.ScrollbarBg]            = ImVec4(0.02, 0.02, 0.02, 0.53)
+    colors[clr.ScrollbarGrab]          = ImVec4(0.31, 0.31, 0.31, 1.00)
+    colors[clr.ScrollbarGrabHovered]   = ImVec4(0.41, 0.41, 0.41, 1.00)
+    colors[clr.ScrollbarGrabActive]    = ImVec4(0.51, 0.51, 0.51, 1.00)
+    colors[clr.PlotLines]              = ImVec4(0.61, 0.61, 0.61, 1.00)
+    colors[clr.PlotLinesHovered]       = ImVec4(1.00, 0.43, 0.35, 1.00)
+    colors[clr.PlotHistogram]          = ImVec4(0.90, 0.70, 0.00, 1.00)
+    colors[clr.PlotHistogramHovered]   = ImVec4(1.00, 0.60, 0.00, 1.00)
 end
