@@ -1,6 +1,6 @@
 script_name("wanted")
 script_author("akacross")
-script_version("0.5.27")
+script_version("0.5.28")
 script_url("https://akacross.net/")
 
 local scriptPath = thisScript().path
@@ -49,7 +49,7 @@ local wanted_defaultSettings = {
         Enabled = true,
         Stars = false,
         Timer = 5,
-        AutoCheckUpdate = false,
+        AutoCheckUpdate = true,
         AutoSave = true,
     }
 }
@@ -72,15 +72,15 @@ local tempOffset = {x = 0, y = 0}
 local selectedbox = false
 local confirmData = {['update'] = {status = false}}
 local pivots = {
-    {name = "Top-Left", value = {x = 0.0, y = 0.0}},
-    {name = "Top-Center", value = {x = 0.5, y = 0.0}},
-    {name = "Top-Right", value = {x = 1.0, y = 0.0}},
-    {name = "Center-Left", value = {x = 0.0, y = 0.5}},
-    {name = "Center", value = {x = 0.5, y = 0.5}},
-    {name = "Center-Right", value = {x = 1.0, y = 0.5}},
-    {name = "Bottom-Left", value = {x = 0.0, y = 1.0}},
-    {name = "Bottom-Center", value = {x = 0.5, y = 1.0}},
-    {name = "Bottom-Right", value = {x = 1.0, y = 1.0}}
+    {name = "Top-Left", value = {x = 0.0, y = 0.0}, icon = fa.ARROW_UP_LEFT},
+    {name = "Top-Center", value = {x = 0.5, y = 0.0}, icon = fa.ARROW_UP},
+    {name = "Top-Right", value = {x = 1.0, y = 0.0}, icon = fa.ARROW_UP_RIGHT},
+    {name = "Center-Left", value = {x = 0.0, y = 0.5}, icon = fa.ARROW_LEFT},
+    {name = "Center", value = {x = 0.5, y = 0.5}, icon = fa.SQUARE},
+    {name = "Center-Right", value = {x = 1.0, y = 0.5}, icon = fa.ARROW_RIGHT},
+    {name = "Bottom-Left", value = {x = 0.0, y = 1.0}, icon = fa.ARROW_DOWN_LEFT},
+    {name = "Bottom-Center", value = {x = 0.5, y = 1.0}, icon = fa.ARROW_DOWN},
+    {name = "Bottom-Right", value = {x = 1.0, y = 1.0}, icon = fa.ARROW_DOWN_RIGHT}
 }
 
 local function saveConfigWithErrorHandling(path, config)
@@ -95,6 +95,7 @@ local function handleUpdate()
     if wanted.updateInProgress then
         formattedAddChatMessage(string.format("You have successfully upgraded from Version: %s to %s", wanted.lastVersion, scriptVersion), -1)
         wanted.updateInProgress = false
+        wanted.Settings.AutoCheckUpdate = true
         saveConfigWithErrorHandling(cfgFile, wanted)
     end
     if wanted.Settings.AutoCheckUpdate then 
@@ -237,7 +238,16 @@ imgui.OnInitialize(function()
         "ERASER",
         "RETWEET",
         "CIRCLE_CHECK",
-        "CIRCLE_XMARK"
+        "CIRCLE_XMARK",
+        "ARROW_UP_LEFT",
+        "ARROW_UP",
+        "ARROW_UP_RIGHT",
+        "ARROW_LEFT",
+        "SQUARE",
+        "ARROW_RIGHT",
+        "ARROW_DOWN_LEFT",
+        "ARROW_DOWN",
+        "ARROW_DOWN_RIGHT"
     }
     for _, b in ipairs(list) do
         builder:AddText(fa(b))
@@ -248,6 +258,8 @@ imgui.OnInitialize(function()
 
     imgui.GetIO().IniFilename = nil
 end)
+
+
 
 imgui.OnFrame(function()
     return menu.wanted[0] and wanted.Settings.Enabled and not isPauseMenuActive() and not sampIsScoreboardOpen() and sampGetChatDisplayMode() > 0 and not isKeyDown(VK_F10)
@@ -384,7 +396,7 @@ function()
 
         if imgui.BeginCombo("Select Pivot", findPivotIndex(wanted.Window.Pivot)) then
             for i = 1, #pivots do
-                if imgui.Selectable(pivots[i].name, selectedPivot == i) then
+                if imgui.Selectable(pivots[i].name .. " " .. pivots[i].icon, selectedPivot == i) then
                     wanted.Window.Pivot = pivots[i].value
                 end
             end
