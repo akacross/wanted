@@ -1,6 +1,6 @@
 script_name("wanted")
 script_author("akacross")
-script_version("0.5.28")
+script_version("0.5.29")
 script_url("https://akacross.net/")
 
 local scriptPath = thisScript().path
@@ -94,9 +94,9 @@ end
 local function handleUpdate()
     if wanted.updateInProgress then
         formattedAddChatMessage(string.format("You have successfully upgraded from Version: %s to %s", wanted.lastVersion, scriptVersion), -1)
-        wanted.updateInProgress = false
-        wanted.Settings.AutoCheckUpdate = true
         saveConfigWithErrorHandling(cfgFile, wanted)
+        wanted.Settings.AutoCheckUpdate = true
+        wanted.updateInProgress = false
     end
     if wanted.Settings.AutoCheckUpdate then 
         checkForUpdate() 
