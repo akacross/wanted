@@ -1,6 +1,6 @@
 script_name("wanted")
 script_author("akacross")
-script_version("0.5.24")
+script_version("0.5.27")
 script_url("https://akacross.net/")
 
 local scriptPath = thisScript().path
@@ -36,14 +36,22 @@ local updateUrl = url .. "wanted.txt"
 -- Libs
 local wanted = {}
 local wanted_defaultSettings = {
-    autoCheckUpdate = false,
     updateInProgress = false,
     lastVersion = "Unknown",
-    AutoSave = true,
-    Enabled = true,
-    Stars = false,
-    Timer = 5,
-    WindowPos = {x = 500, y = 500}
+    Window = {
+        Pos = {x = 500, y = 500},
+        BackgroundColor = -16777216,
+        BorderColor = -1,
+        BorderSize = 2.0,
+        Pivot = {x = 0.5, y = 0.0}
+    },
+    Settings = {
+        Enabled = true,
+        Stars = false,
+        Timer = 5,
+        AutoCheckUpdate = false,
+        AutoSave = true,
+    }
 }
 
 local ped, h = playerPed, playerHandle
@@ -54,6 +62,7 @@ local commandSent = false
 
 local new, str, sizeof = imgui.new, ffi.string, ffi.sizeof
 local menu = {
+    wanted = new.bool(false),
     settings = new.bool(false),
     confirm = new.bool(false)
 }
@@ -62,57 +71,38 @@ local windowSize = {x = 0, y = 0}
 local tempOffset = {x = 0, y = 0}
 local selectedbox = false
 local confirmData = {['update'] = {status = false}}
+local pivots = {
+    {name = "Top-Left", value = {x = 0.0, y = 0.0}},
+    {name = "Top-Center", value = {x = 0.5, y = 0.0}},
+    {name = "Top-Right", value = {x = 1.0, y = 0.0}},
+    {name = "Center-Left", value = {x = 0.0, y = 0.5}},
+    {name = "Center", value = {x = 0.5, y = 0.5}},
+    {name = "Center-Right", value = {x = 1.0, y = 0.5}},
+    {name = "Bottom-Left", value = {x = 0.0, y = 1.0}},
+    {name = "Bottom-Center", value = {x = 0.5, y = 1.0}},
+    {name = "Bottom-Right", value = {x = 1.0, y = 1.0}}
+}
 
-local function handleConfigFile(path, defaults, configVar, ignoreKeys)
-	ignoreKeys = ignoreKeys or {}
-    if doesFileExist(path) then
-        local config, err = loadConfig(path)
-        if not config then
-            print("Error loading config: " .. err)
-
-            local newpath = path:gsub("%.[^%.]+$", ".bak")
-            local success, err2 = os.rename(path, newpath)
-            if not success then
-                print("Error renaming config: " .. err2)
-                os.remove(path)
-            end
-            handleConfigFile(path, defaults, configVar)
-        else
-            local result = ensureDefaults(config, defaults, false, ignoreKeys)
-            if result then
-                local success, err3 = saveConfig(path, config)
-                if not success then
-                    print("Error saving config: " .. err3)
-                end
-            end
-            return config
-        end
-    else
-        local result = ensureDefaults(configVar, defaults, true)
-        if result then
-            local success, err = saveConfig(path, configVar)
-            if not success then
-                print("Error saving config: " .. err)
-            end
-        end
+local function saveConfigWithErrorHandling(path, config)
+    local success, err = saveConfig(path, config)
+    if not success then
+        print("Error saving config to " .. path .. ": " .. err)
     end
-    return configVar
+    return success
 end
 
-function main()
-    createDirectory(configDir)
-    wanted = handleConfigFile(cfgFile, wanted_defaultSettings, wanted)
-
-    repeat wait(0) until isSampAvailable()
+local function handleUpdate()
     if wanted.updateInProgress then
         formattedAddChatMessage(string.format("You have successfully upgraded from Version: %s to %s", wanted.lastVersion, scriptVersion), -1)
         wanted.updateInProgress = false
-
-        local success, err = saveConfig(cfgFile, wanted)
-        if not success then print("Error saving config: " .. err) end
+        saveConfigWithErrorHandling(cfgFile, wanted)
     end
-    if wanted.autoCheckUpdate then checkForUpdate() end
+    if wanted.Settings.AutoCheckUpdate then 
+        checkForUpdate() 
+    end
+end
 
+local function registerChatCommands()
     sampRegisterChatCommand('wanted.settings', function()
         if wanted.updateInProgress then
             formattedAddChatMessage("Update in progress. Please wait a moment.", -1)
@@ -122,7 +112,7 @@ function main()
     end)
 
     sampRegisterChatCommand('wanted', function()
-        if not wanted.Enabled then sampSendChat("/wanted") return end
+        if not wanted.Settings.Enabled then sampSendChat("/wanted") return end
         sampAddChatMessage("__________WANTED LIST__________", 0xFF8000)
         if not wantedlist then
             sampAddChatMessage("No current wanted suspects.", -1)
@@ -133,22 +123,27 @@ function main()
         end
         sampAddChatMessage("________________________________", 0xFF8000)
     end)
+end
+
+function main()
+    createDirectory(configDir)
+    wanted = handleConfigFile(cfgFile, wanted_defaultSettings, wanted)
+
+    repeat wait(0) until isSampAvailable()
+    handleUpdate()
+    registerChatCommands()
 
     while true do wait(0)
-        if sampGetGamestate() ~= 3 and wantedlist then wantedlist = nil end
-        if wanted.Enabled and wanted.Timer <= localClock() - last_wanted then
+        if sampGetGamestate() ~= 3 and wantedlist then 
+            if menu.wanted[0] then 
+                menu.wanted[0] = false 
+            end
+            wantedlist = nil 
+        end
+        if wanted.Settings.Enabled and wanted.Settings.Timer <= localClock() - last_wanted then
             sampSendChat("/wanted")
             last_wanted = localClock()
             commandSent = true
-        end
-    end
-end
-
-function onScriptTerminate(scr, quitGame)
-    if scr == script.this then
-        if wanted.AutoSave then
-            local success, err = saveConfig(cfgFile, wanted)
-            if not success then print("Error saving config: " .. err) end
         end
     end
 end
@@ -164,21 +159,18 @@ function onWindowMessage(msg, wparam, lparam)
     end
 end
 
-function sampev.onShowTextDraw(id, data)
-    if data.text:match("~r~Objects loading...") then
-        last_timer = wanted.Timer
-        wanted.Timer = 15
-    end
-
-    if data.text:match("~g~Objects loaded!") then
-        wanted.Timer = last_timer
+function onScriptTerminate(scr, quitGame)
+    if scr == script.this then
+        if wanted.Settings.AutoSave then
+            saveConfigWithErrorHandling(cfgFile, wanted)
+        end
     end
 end
 
 function sampev.onServerMessage(color, text)
-    if wanted.Enabled or commandSent then
+    if wanted.Settings.Enabled or commandSent then
         if text:match("You're not a Lawyer / Cop / FBI!") and color == -1347440726 then
-            wanted.Enabled = false
+            wanted.Settings.Enabled = false
         end
 
         local nickname = text:match("HQ: (.+) has been processed, was arrested.")
@@ -186,12 +178,16 @@ function sampev.onServerMessage(color, text)
             for k, v in pairs(wantedlist) do
                 if v.name:match(nickname) then
                     table.remove(wantedlist, k)
+                    break
                 end
             end
         end
 
         if color == -8388353 then
             if text:match("__________WANTED LIST__________") then
+                if not menu.wanted[0] then 
+                    menu.wanted[0] = true 
+                end
                 wantedlist = nil
                 return false
             end
@@ -220,7 +216,7 @@ function sampev.onServerMessage(color, text)
         end
     else
         if ((text:match("LSPD MOTD: (.+)") or text:match("SASD MOTD: (.+)") or text:match("FBI MOTD: (.+)") or text:match("ARES MOTD: (.+)")) and not text:find("SMS:") and not text:find("Advertisement:") and color == -65366) or (text:match("%* You are now a Lawyer, type /help to see your new commands.") and color == 869072810) then
-            wanted.Enabled = true
+            wanted.Settings.Enabled = true
         end
     end
 end
@@ -254,35 +250,41 @@ imgui.OnInitialize(function()
 end)
 
 imgui.OnFrame(function()
-    return wanted.Enabled and not isPauseMenuActive() and not sampIsScoreboardOpen() and sampGetChatDisplayMode() > 0 and not isKeyDown(VK_F10)
+    return menu.wanted[0] and wanted.Settings.Enabled and not isPauseMenuActive() and not sampIsScoreboardOpen() and sampGetChatDisplayMode() > 0 and not isKeyDown(VK_F10)
 end,
 function()
-    local newPos, status = imgui.handleWindowDragging(wanted.WindowPos, {x = windowSize.x / 2, y = windowSize.y / 2}, windowSize, menu.settings[0])
-    if status then wanted.WindowPos = newPos end
-    imgui.SetNextWindowPos(wanted.WindowPos, imgui.Cond.Always, imgui.ImVec2(0.5, 0.5))
-    imgui.PushStyleColor(imgui.Col.Border, imgui.ImVec4(0.110, 0.467, 0.702, 1.0))
-    imgui.PushStyleVarFloat(imgui.StyleVar.WindowBorderSize, 2.0)
+    local newPos, status = imgui.handleWindowDragging(wanted.Window.Pos, windowSize, wanted.Window.Pivot)
+    if status and menu.settings[0] then wanted.Window.Pos = newPos end
+    imgui.SetNextWindowPos(wanted.Window.Pos, imgui.Cond.Always, imgui.ImVec2(wanted.Window.Pivot.x, wanted.Window.Pivot.y))
+
+    imgui.PushStyleColor(imgui.Col.WindowBg, imgui.ImVec4(convertColor(wanted.Window.BackgroundColor, true, true)))
+    imgui.PushStyleColor(imgui.Col.Border, imgui.ImVec4(convertColor(wanted.Window.BorderColor, true, true)))
+    imgui.PushStyleVarFloat(imgui.StyleVar.WindowBorderSize, wanted.Window.BorderSize)
+
     if imgui.Begin(scriptName, nil, imgui.WindowFlags.NoDecoration + imgui.WindowFlags.AlwaysAutoResize) then
         if not wantedlist then
             imgui.TextColoredRGB("No current wanted suspects.")
         else
             for _, v in pairs(wantedlist) do
-                local stars = wanted.Stars and string.rep(fa.STAR, v.charges) or string.format("%d outstanding %s.", v.charges, v.charges == 1 and "charge" or "charges")
-                imgui.TextColoredRGB(string.format("%s (%d): {%s}%s", v.name, v.id, v.charges == 6 and "FF0000FF" or "B4B4B4", stars))
+                imgui.TextColoredRGB(string.format("%s (%d): {%s}%s", v.name, v.id, v.charges == 6 and "FF0000FF" or "B4B4B4", wanted.Settings.Stars and string.rep(fa.STAR, v.charges) or string.format("%d outstanding %s.", v.charges, v.charges == 1 and "charge" or "charges")))
             end
         end
         windowSize = imgui.GetWindowSize()
     end
+
     imgui.PopStyleVar()
     imgui.PopStyleColor()
+    imgui.PopStyleColor()
+
     imgui.End()
 end).HideCursor = true
 
 imgui.OnFrame(function() return menu.settings[0] end,
 function()
     local title = string.format("%s %s Settings - Version: %s", fa.STAR, firstToUpper(scriptName), scriptVersion)
-    local width, height = getScreenResolution()
-    imgui.SetNextWindowPos(imgui.ImVec2(width / 2, height / 2), imgui.Cond.FirstUseEver, imgui.ImVec2(0.5, 0.5))
+    local io = imgui.GetIO()
+    local center = imgui.ImVec2(io.DisplaySize.x / 2, io.DisplaySize.y / 2)
+    imgui.SetNextWindowPos(center, imgui.Cond.FirstUseEver, imgui.ImVec2(0.5, 0.5))
     imgui.PushStyleVarVec2(imgui.StyleVar.WindowPadding, imgui.ImVec2(0, 0))
     imgui.Begin(title, menu.settings, imgui.WindowFlags.NoResize + imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoScrollbar + imgui.WindowFlags.AlwaysAutoResize)
         imgui.BeginChild("##1", imgui.ImVec2(272, 41), true)
@@ -290,13 +292,13 @@ function()
         imgui.SetCursorPos(imgui.ImVec2(0, 0))
         if imgui.CustomButtonWithTooltip(
             fa.POWER_OFF..'##1',
-            wanted.Enabled and imgui.ImVec4(0.15, 0.59, 0.18, 0.7) or imgui.ImVec4(1, 0.19, 0.19, 0.5),
-            wanted.Enabled and imgui.ImVec4(0.15, 0.59, 0.18, 0.5) or imgui.ImVec4(1, 0.19, 0.19, 0.3),
-            wanted.Enabled and imgui.ImVec4(0.15, 0.59, 0.18, 0.4) or imgui.ImVec4(1, 0.19, 0.19, 0.2),
+            wanted.Settings.Enabled and imgui.ImVec4(0.15, 0.59, 0.18, 0.7) or imgui.ImVec4(1, 0.19, 0.19, 0.5),
+            wanted.Settings.Enabled and imgui.ImVec4(0.15, 0.59, 0.18, 0.5) or imgui.ImVec4(1, 0.19, 0.19, 0.3),
+            wanted.Settings.Enabled and imgui.ImVec4(0.15, 0.59, 0.18, 0.4) or imgui.ImVec4(1, 0.19, 0.19, 0.2),
             imgui.ImVec2(50.0, 40.0),
             "Toggle Wanted Menu"
         ) then
-            wanted.Enabled = not wanted.Enabled
+            wanted.Settings.Enabled = not wanted.Settings.Enabled
         end
 
         imgui.SetCursorPos(imgui.ImVec2(51, 0))
@@ -353,25 +355,48 @@ function()
         imgui.EndChild()
 
         imgui.SetCursorPos(imgui.ImVec2(0, 60))
-        imgui.BeginChild("##2", imgui.ImVec2(272, 55), true)
+        imgui.BeginChild("##2", imgui.ImVec2(272, 150), true)
 
-        if imgui.Checkbox('Stars', new.bool(wanted.Stars)) then
-            wanted.Stars = not wanted.Stars
+        if imgui.Checkbox('Stars', new.bool(wanted.Settings.Stars)) then
+            wanted.Settings.Stars = not wanted.Settings.Stars
         end
         imgui.SameLine()
         imgui.PushItemWidth(50)
-        local timer = new.float[1](wanted.Timer)
+        local timer = new.float[1](wanted.Settings.Timer)
         if imgui.DragFloat('Refresh Rate', timer, 1, 2, 10, "%.f") then
-            wanted.Timer = timer[0]
+            wanted.Settings.Timer = timer[0]
         end
         imgui.PopItemWidth()
 
-        if imgui.Checkbox('Auto-Update', new.bool(wanted.autoCheckUpdate)) then
-            wanted.autoCheckUpdate = not wanted.autoCheckUpdate
+        local bgColor = new.float[4](convertColor(wanted.Window.BackgroundColor, true, true))
+        if imgui.ColorEdit4('##bgColor', bgColor, imgui.ColorEditFlags.NoInputs + imgui.ColorEditFlags.NoLabel) then
+            wanted.Window.BackgroundColor = joinARGB(bgColor[3], bgColor[0], bgColor[1], bgColor[2], true)
         end
         imgui.SameLine()
-        if imgui.Checkbox('Auto-Save', new.bool(wanted.AutoSave)) then
-            wanted.AutoSave = not wanted.AutoSave
+        imgui.Text('Background Color')
+
+        local borderColor = new.float[4](convertColor(wanted.Window.BorderColor, true, true))
+        if imgui.ColorEdit4('##borderColor', borderColor, imgui.ColorEditFlags.NoInputs + imgui.ColorEditFlags.NoLabel) then
+            wanted.Window.BorderColor = joinARGB(borderColor[3], borderColor[0], borderColor[1], borderColor[2], true)
+        end
+        imgui.SameLine()
+        imgui.Text('Border Color')
+
+        if imgui.BeginCombo("Select Pivot", findPivotIndex(wanted.Window.Pivot)) then
+            for i = 1, #pivots do
+                if imgui.Selectable(pivots[i].name, selectedPivot == i) then
+                    wanted.Window.Pivot = pivots[i].value
+                end
+            end
+            imgui.EndCombo()
+        end
+
+        if imgui.Checkbox('Auto-Update', new.bool(wanted.Settings.AutoCheckUpdate)) then
+            wanted.Settings.AutoCheckUpdate = not wanted.Settings.AutoCheckUpdate
+        end
+        imgui.SameLine()
+        if imgui.Checkbox('Auto-Save', new.bool(wanted.Settings.AutoSave)) then
+            wanted.Settings.AutoSave = not wanted.Settings.AutoSave
         end
 
         imgui.EndChild()
@@ -381,7 +406,7 @@ end)
 
 local function handleButton(label, action, width)
     width = width or 85
-    if imgui.CustomButton(label, imgui.ImVec4(0.16, 0.16, 0.16, 0.9), imgui.ImVec4(0.40, 0.12, 0.12, 1), imgui.ImVec4(0.30, 0.08, 0.08, 1), imgui.ImVec2(width, 45)) then
+    if imgui.CustomButtonWithTooltip(label, imgui.ImVec4(0.16, 0.16, 0.16, 0.9), imgui.ImVec4(0.40, 0.12, 0.12, 1), imgui.ImVec4(0.30, 0.08, 0.08, 1), imgui.ImVec2(width, 45)) then
         action()
         status = false
         menu.confirm[0] = false
@@ -438,14 +463,6 @@ function updateScript()
     end)
 end
 
-function formattedAddChatMessage(string, color)
-    sampAddChatMessage(string.format("{ABB2B9}[%s]{FFFFFF} %s", firstToUpper(scriptName), string), color)
-end
-
-function firstToUpper(string)
-    return (string:gsub("^%l", string.upper))
-end
-
 function downloadFiles(table, onCompleteCallback)
     local downloadsInProgress = 0
     local downloadsStarted = false
@@ -474,6 +491,42 @@ function downloadFiles(table, onCompleteCallback)
         callbackCalled = true
         onCompleteCallback(downloadsStarted)
     end
+end
+
+function handleConfigFile(path, defaults, configVar, ignoreKeys)
+    ignoreKeys = ignoreKeys or {}
+    if doesFileExist(path) then
+        local config, err = loadConfig(path)
+        if not config then
+            print("Error loading config from " .. path .. ": " .. err)
+
+            local newpath = path:gsub("%.[^%.]+$", ".bak")
+            local success, err2 = os.rename(path, newpath)
+            if not success then
+                print("Error renaming config: " .. err2)
+                os.remove(path)
+            end
+            handleConfigFile(path, defaults, configVar)
+        else
+            local result = ensureDefaults(config, defaults, false, ignoreKeys)
+            if result then
+                local success, err3 = saveConfig(path, config)
+                if not success then
+                    print("Error saving config: " .. err3)
+                end
+            end
+            return config
+        end
+    else
+        local result = ensureDefaults(configVar, defaults, true)
+        if result then
+            local success, err = saveConfig(path, configVar)
+            if not success then
+                print("Error saving config: " .. err)
+            end
+        end
+    end
+    return configVar
 end
 
 function loadConfig(filePath)
@@ -559,6 +612,15 @@ function ensureDefaults(config, defaults, reset, ignoreKeys)
         return localStatus
     end
 
+    -- Use metatable to handle default values
+    setmetatable(config, {__index = function(t, k)
+        if type(defaults[k]) == "table" then
+            t[k] = {}
+            applyDefaults(t[k], defaults[k])
+            return t[k]
+        end
+    end})
+
     status = applyDefaults(config, defaults)
     status = cleanupConfig(config, defaults) or status
     return status
@@ -615,21 +677,23 @@ function compareVersions(version1, version2)
     return 0
 end
 
-function imgui.handleWindowDragging(pos, offset, size, menu)
-    if not menu then return {x = pos.x, y = pos.y}, false end
+function imgui.handleWindowDragging(pos, size, pivot)
     local mpos = imgui.GetMousePos()
-    if mpos.x + offset.x >= pos.x and mpos.x <= pos.x + size.x - offset.x and mpos.y + offset.y >= pos.y and mpos.y <= pos.y + size.y - offset.y then
+    local offset = {x = size.x * pivot.x, y = size.y * pivot.y}
+    local boxPos = {x = pos.x - offset.x, y = pos.y - offset.y}
+
+    if mpos.x >= boxPos.x and mpos.x <= boxPos.x + size.x and mpos.y >= boxPos.y and mpos.y <= boxPos.y + size.y then
         if imgui.IsMouseClicked(0) then
             selectedbox = true
-            tempOffset.x = mpos.x - pos.x
-            tempOffset.y = mpos.y - pos.y
+            tempOffset = {x = mpos.x - boxPos.x, y = mpos.y - boxPos.y}
         end
     end
     if selectedbox then
         if imgui.IsMouseReleased(0) then
             selectedbox = false
         else
-            return {x = mpos.x - tempOffset.x, y = mpos.y - tempOffset.y}, true
+            local newBoxPos = {x = mpos.x - tempOffset.x, y = mpos.y - tempOffset.y}
+            return {x = newBoxPos.x + offset.x, y = newBoxPos.y + offset.y}, true
         end
     end
     return {x = pos.x, y = pos.y}, false
@@ -665,6 +729,23 @@ function joinARGB(a, r, g, b, normalized)
         a, r, g, b = math.floor(a * 255), math.floor(r * 255), math.floor(g * 255), math.floor(b * 255)
     end
     return bit.bor(bit.lshift(a, 24), bit.lshift(r, 16), bit.lshift(g, 8), b)
+end
+
+function formattedAddChatMessage(string, color)
+    sampAddChatMessage(string.format("{ABB2B9}[%s]{FFFFFF} %s", firstToUpper(scriptName), string), color)
+end
+
+function firstToUpper(string)
+    return (string:gsub("^%l", string.upper))
+end
+
+function findPivotIndex(pivot)
+    for _, p in ipairs(pivots) do
+        if p.value.x == pivot.x and p.value.y == pivot.y then
+            return p.name
+        end
+    end
+    return false
 end
 
 function imgui.TextColoredRGB(text)
@@ -743,17 +824,6 @@ function imgui.CustomButtonWithTooltip(name, color, colorHovered, colorActive, s
         imgui.SetTooltip(tooltip)
         imgui.PopStyleVar()
     end
-    return result
-end
-
-function imgui.CustomButton(name, color, colorHovered, colorActive, size)
-    local clr = imgui.Col
-    imgui.PushStyleColor(clr.Button, color)
-    imgui.PushStyleColor(clr.ButtonHovered, colorHovered)
-    imgui.PushStyleColor(clr.ButtonActive, colorActive)
-    if not size then size = imgui.ImVec2(0, 0) end
-    local result = imgui.Button(name, size)
-    imgui.PopStyleColor(3)
     return result
 end
 
