@@ -1,6 +1,6 @@
 script_name("wanted")
 script_author("akacross")
-script_version("0.5.29")
+script_version("0.5.31")
 script_url("https://akacross.net/")
 
 local scriptPath = thisScript().path
@@ -48,6 +48,7 @@ local wanted_defaultSettings = {
     Settings = {
         Enabled = true,
         Stars = false,
+        ShowRefresh = false,
         Timer = 5,
         AutoCheckUpdate = true,
         AutoSave = true,
@@ -67,6 +68,8 @@ local menu = {
     confirm = new.bool(false)
 }
 local mainc = imgui.ImVec4(0.98, 0.26, 0.26, 1.00)
+local bgColorEditing = false
+local borderColorEditing = false
 local windowSize = {x = 0, y = 0}
 local tempOffset = {x = 0, y = 0}
 local selectedbox = false
@@ -83,6 +86,29 @@ local pivots = {
     {name = "Bottom-Right", value = {x = 1.0, y = 1.0}, icon = fa.ARROW_DOWN_RIGHT}
 }
 
+-- Function to compare pivot values
+local function comparePivots(pivot1, pivot2)
+    return pivot1.x == pivot2.x and pivot1.y == pivot2.y
+end
+
+-- Function to find the pivot index
+local function findPivotIndex(pivot)
+    for i, p in ipairs(pivots) do
+        if comparePivots(p.value, pivot) then
+            return p.name .. " " .. p.icon
+        end
+    end
+    return "Unknown"
+end
+
+local function formattedAddChatMessage(string, color)
+    sampAddChatMessage(string.format("{ABB2B9}[%s]{FFFFFF} %s", firstToUpper(scriptName), string), color)
+end
+
+local function firstToUpper(string)
+    return (string:gsub("^%l", string.upper))
+end
+
 local function saveConfigWithErrorHandling(path, config)
     local success, err = saveConfig(path, config)
     if not success then
@@ -94,9 +120,8 @@ end
 local function handleUpdate()
     if wanted.updateInProgress then
         formattedAddChatMessage(string.format("You have successfully upgraded from Version: %s to %s", wanted.lastVersion, scriptVersion), -1)
-        saveConfigWithErrorHandling(cfgFile, wanted)
-        wanted.Settings.AutoCheckUpdate = true
         wanted.updateInProgress = false
+        saveConfigWithErrorHandling(cfgFile, wanted)
     end
     if wanted.Settings.AutoCheckUpdate then 
         checkForUpdate() 
@@ -129,6 +154,8 @@ end
 function main()
     createDirectory(configDir)
     wanted = handleConfigFile(cfgFile, wanted_defaultSettings, wanted)
+
+    wanted.Settings.AutoCheckUpdate = true
 
     repeat wait(0) until isSampAvailable()
     handleUpdate()
@@ -165,6 +192,17 @@ function onScriptTerminate(scr, quitGame)
         if wanted.Settings.AutoSave then
             saveConfigWithErrorHandling(cfgFile, wanted)
         end
+    end
+end
+
+function sampev.onShowTextDraw(id, data)
+    if data.text:match("~r~Objects loading...") then
+        last_timer = wanted.Settings.Timer
+        wanted.Settings.Timer = 15
+    end
+
+    if data.text:match("~g~Objects loaded!") then
+        wanted.Settings.Timer = last_timer
     end
 end
 
@@ -222,74 +260,87 @@ function sampev.onServerMessage(color, text)
     end
 end
 
-imgui.OnInitialize(function()
-    apply_custom_style()
-
+function loadFontAwesome6Icons(iconList, fontSize)
     local config = imgui.ImFontConfig()
     config.MergeMode = true
     config.PixelSnapH = true
     config.GlyphMinAdvanceX = 14
     local builder = imgui.ImFontGlyphRangesBuilder()
-    local list = {
-        "STAR",
-        "POWER_OFF",
-        "FLOPPY_DISK",
-        "REPEAT",
-        "ERASER",
-        "RETWEET",
-        "CIRCLE_CHECK",
-        "CIRCLE_XMARK",
-        "ARROW_UP_LEFT",
-        "ARROW_UP",
-        "ARROW_UP_RIGHT",
-        "ARROW_LEFT",
-        "SQUARE",
-        "ARROW_RIGHT",
-        "ARROW_DOWN_LEFT",
-        "ARROW_DOWN",
-        "ARROW_DOWN_RIGHT"
-    }
-    for _, b in ipairs(list) do
-        builder:AddText(fa(b))
+    
+    for _, icon in ipairs(iconList) do
+        builder:AddText(fa(icon))
     end
-    defaultGlyphRanges1 = imgui.ImVector_ImWchar()
-    builder:BuildRanges(defaultGlyphRanges1)
-    imgui.GetIO().Fonts:AddFontFromMemoryCompressedBase85TTF(fa.get_font_data_base85("solid"), 14, config, defaultGlyphRanges1[0].Data)
+    
+    local glyphRanges = imgui.ImVector_ImWchar()
+    builder:BuildRanges(glyphRanges)
+    imgui.GetIO().Fonts:AddFontFromMemoryCompressedBase85TTF(fa.get_font_data_base85("solid"), fontSize, config, glyphRanges[0].Data)
+end
 
+imgui.OnInitialize(function()
     imgui.GetIO().IniFilename = nil
+    local smallIcons = {"ARROWS_ROTATE", "CHECK"}
+    local defaultIcons = {
+        "STAR", "POWER_OFF", "FLOPPY_DISK", "REPEAT", "ERASER", "RETWEET",
+        "CIRCLE_CHECK", "CIRCLE_XMARK", "ARROW_UP_LEFT", "ARROW_UP",
+        "ARROW_UP_RIGHT", "ARROW_LEFT", "SQUARE", "ARROW_RIGHT",
+        "ARROW_DOWN_LEFT", "ARROW_DOWN", "ARROW_DOWN_RIGHT"
+    }
+    loadFontAwesome6Icons(smallIcons, 8)
+    loadFontAwesome6Icons(defaultIcons, 14)
+    apply_custom_style()
 end)
-
-
 
 imgui.OnFrame(function()
     return menu.wanted[0] and wanted.Settings.Enabled and not isPauseMenuActive() and not sampIsScoreboardOpen() and sampGetChatDisplayMode() > 0 and not isKeyDown(VK_F10)
 end,
 function()
+    local textLines = {"No current wanted suspects."}
+    if wantedlist then
+        textLines = {}
+        for _, entry in ipairs(wantedlist) do
+            table.insert(textLines, formatWantedString(entry))
+        end
+    end
+    windowSize = calculateWindowSize(textLines, imgui.ImVec2(8, 8))
+
     local newPos, status = imgui.handleWindowDragging(wanted.Window.Pos, windowSize, wanted.Window.Pivot)
     if status and menu.settings[0] then wanted.Window.Pos = newPos end
     imgui.SetNextWindowPos(wanted.Window.Pos, imgui.Cond.Always, imgui.ImVec2(wanted.Window.Pivot.x, wanted.Window.Pivot.y))
+    imgui.SetNextWindowSize(windowSize, imgui.Cond.Always)
 
     imgui.PushStyleColor(imgui.Col.WindowBg, imgui.ImVec4(convertColor(wanted.Window.BackgroundColor, true, true)))
     imgui.PushStyleColor(imgui.Col.Border, imgui.ImVec4(convertColor(wanted.Window.BorderColor, true, true)))
     imgui.PushStyleVarFloat(imgui.StyleVar.WindowBorderSize, wanted.Window.BorderSize)
+    imgui.PushStyleVarVec2(imgui.StyleVar.WindowPadding, imgui.ImVec2(8, 8))
 
-    if imgui.Begin(scriptName, nil, imgui.WindowFlags.NoDecoration + imgui.WindowFlags.AlwaysAutoResize) then
+    if imgui.Begin(scriptName, menu.wanted, imgui.WindowFlags.NoDecoration) then
         if not wantedlist then
             imgui.TextColoredRGB("No current wanted suspects.")
         else
             for _, v in pairs(wantedlist) do
-                imgui.TextColoredRGB(string.format("%s (%d): {%s}%s", v.name, v.id, v.charges == 6 and "FF0000FF" or "B4B4B4", wanted.Settings.Stars and string.rep(fa.STAR, v.charges) or string.format("%d outstanding %s.", v.charges, v.charges == 1 and "charge" or "charges")))
+                imgui.TextColoredRGB(formatWantedString(v))
             end
         end
-        windowSize = imgui.GetWindowSize()
+        if wanted.Settings.ShowRefresh then
+            if (wanted.Settings.Timer - (localClock() - last_wanted)) < 0.25 then
+                imgui.SetCursorPos(imgui.ImVec2(windowSize.x - 15.5, 0))
+                imgui.TextColoredRGB(fa.ARROWS_ROTATE)
+            elseif (wanted.Settings.Timer - (localClock() - last_wanted)) >= wanted.Settings.Timer - 0.5 then
+                imgui.SetCursorPos(imgui.ImVec2(windowSize.x - 15.5, 0))
+                imgui.TextColoredRGB(fa.CHECK)
+            end
+        end
     end
 
+    imgui.PopStyleVar()
     imgui.PopStyleVar()
     imgui.PopStyleColor()
     imgui.PopStyleColor()
 
     imgui.End()
 end).HideCursor = true
+
+        
 
 imgui.OnFrame(function() return menu.settings[0] end,
 function()
@@ -359,49 +410,65 @@ function()
             imgui.ImVec4(mainc.x, mainc.y, mainc.z, 0.5),
             imgui.ImVec4(mainc.x, mainc.y, mainc.z, 1),
             imgui.ImVec2(70.0, 40.0),
-            'Check for update)'
+            'Check for update'
         ) then
             checkForUpdate()
         end
 
         imgui.EndChild()
 
-        imgui.SetCursorPos(imgui.ImVec2(0, 60))
-        imgui.BeginChild("##2", imgui.ImVec2(272, 150), true)
+        imgui.SetCursorPos(imgui.ImVec2(5, 65))
+        imgui.BeginChild("##2", imgui.ImVec2(268, 150), false)
 
         if imgui.Checkbox('Stars', new.bool(wanted.Settings.Stars)) then
             wanted.Settings.Stars = not wanted.Settings.Stars
         end
+        
+        if imgui.Checkbox('Show Refresh', new.bool(wanted.Settings.ShowRefresh)) then
+            wanted.Settings.ShowRefresh = not wanted.Settings.ShowRefresh
+        end
         imgui.SameLine()
-        imgui.PushItemWidth(50)
-        local timer = new.float[1](wanted.Settings.Timer)
-        if imgui.DragFloat('Refresh Rate', timer, 1, 2, 10, "%.f") then
-            wanted.Settings.Timer = timer[0]
+        imgui.PushItemWidth(30)
+        local timer = new.float[1](wanted.Settings.Timer - 2)
+        if imgui.DragFloat('Refresh Rate', timer, 1, 1, 10, "%.f") then
+            wanted.Settings.Timer = timer[0] + 2
         end
         imgui.PopItemWidth()
-
+        
         local bgColor = new.float[4](convertColor(wanted.Window.BackgroundColor, true, true))
-        if imgui.ColorEdit4('##bgColor', bgColor, imgui.ColorEditFlags.NoInputs + imgui.ColorEditFlags.NoLabel) then
+        local bgStatus = imgui.ColorEdit4('##bgColor', bgColor, imgui.ColorEditFlags.NoInputs + imgui.ColorEditFlags.NoLabel + imgui.ColorEditFlags.AlphaBar)
+        if bgStatus then
             wanted.Window.BackgroundColor = joinARGB(bgColor[3], bgColor[0], bgColor[1], bgColor[2], true)
         end
         imgui.SameLine()
         imgui.Text('Background Color')
-
+        
         local borderColor = new.float[4](convertColor(wanted.Window.BorderColor, true, true))
-        if imgui.ColorEdit4('##borderColor', borderColor, imgui.ColorEditFlags.NoInputs + imgui.ColorEditFlags.NoLabel) then
+        local borderStatus = imgui.ColorEdit4('##borderColor', borderColor, imgui.ColorEditFlags.NoInputs + imgui.ColorEditFlags.NoLabel + imgui.ColorEditFlags.AlphaBar)
+        if borderStatus then
             wanted.Window.BorderColor = joinARGB(borderColor[3], borderColor[0], borderColor[1], borderColor[2], true)
         end
         imgui.SameLine()
         imgui.Text('Border Color')
+        imgui.SameLine()
+        imgui.PushItemWidth(35)
+        local border = new.float[1](wanted.Window.BorderSize)
+        if imgui.DragFloat('Border Size', border, 0.1, 0, 8, "%.1f") then
+            wanted.Window.BorderSize = border[0]
+        end
+        imgui.PopItemWidth()
 
+        imgui.PushItemWidth(130)
         if imgui.BeginCombo("Select Pivot", findPivotIndex(wanted.Window.Pivot)) then
             for i = 1, #pivots do
-                if imgui.Selectable(pivots[i].name .. " " .. pivots[i].icon, selectedPivot == i) then
-                    wanted.Window.Pivot = pivots[i].value
+                local pivot = pivots[i]
+                if imgui.Selectable(pivot.name .. " " .. pivot.icon, comparePivots(wanted.Window.Pivot, pivot.value)) then
+                    wanted.Window.Pivot = pivot.value
                 end
             end
             imgui.EndCombo()
         end
+        imgui.PopItemWidth()
 
         if imgui.Checkbox('Auto-Update', new.bool(wanted.Settings.AutoCheckUpdate)) then
             wanted.Settings.AutoCheckUpdate = not wanted.Settings.AutoCheckUpdate
@@ -453,6 +520,7 @@ function checkForUpdate()
 	asyncHttpRequest('GET', updateUrl, nil,
 		function(response)
             local updateVersion = response.text:match("version: (.+)")
+            print(compareVersions(scriptVersion, updateVersion))
             if updateVersion and compareVersions(scriptVersion, updateVersion) == -1 then
                 confirmData['update'].status = true
                 menu.confirm[0] = true
@@ -675,17 +743,27 @@ function asyncHttpRequest(method, url, args, resolve, reject)
     end)
 end
 
+-- Compare two version strings and return 1 if version1 is greater, -1 if version2 is greater, 0 if they are equal
 function compareVersions(version1, version2)
     local function parseVersion(version)
-        local major, minor, patch = version:match("(%d+)%.?(%d*)%.?(%d*)")
-        return tonumber(major) or 0, tonumber(minor) or 0, tonumber(patch) or 0
+        local parts = {}
+        for part in version:gmatch("(%d+)") do
+            table.insert(parts, tonumber(part))
+        end
+        return parts
     end
 
-    local major1, minor1, patch1 = parseVersion(version1)
-    local major2, minor2, patch2 = parseVersion(version2)
-    if major1 ~= major2 then return (major1 > major2) and 1 or -1 end
-    if minor1 ~= minor2 then return (minor1 > minor2) and 1 or -1 end
-    if patch1 ~= patch2 then return (patch1 > patch2) and 1 or -1 end
+    local v1 = parseVersion(version1)
+    local v2 = parseVersion(version2)
+
+    local maxLength = math.max(#v1, #v2)
+    for i = 1, maxLength do
+        local part1 = v1[i] or 0
+        local part2 = v2[i] or 0
+        if part1 ~= part2 then
+            return (part1 > part2) and 1 or -1
+        end
+    end
     return 0
 end
 
@@ -712,27 +790,23 @@ function imgui.handleWindowDragging(pos, size, pivot)
 end
 
 function convertColor(color, normalize, includeAlpha, hexColor)
+    if type(color) ~= "number" then
+        error("Invalid color value. Expected a number.")
+    end
+
     local r = bit.band(bit.rshift(color, 16), 0xFF)
     local g = bit.band(bit.rshift(color, 8), 0xFF)
     local b = bit.band(color, 0xFF)
-    local a = bit.band(bit.rshift(color, 24), 0xFF)
+    local a = includeAlpha and bit.band(bit.rshift(color, 24), 0xFF) or 255
 
     if normalize then
         r, g, b, a = r / 255, g / 255, b / 255, a / 255
     end
 
     if hexColor then
-        if includeAlpha then
-            return string.format("%02X%02X%02X%02X", a, r, g, b)
-        else
-            return string.format("%02X%02X%02X", r, g, b)
-        end
+        return includeAlpha and string.format("%02X%02X%02X%02X", a, r, g, b) or string.format("%02X%02X%02X", r, g, b)
     else
-        if includeAlpha then
-            return r, g, b, a
-        else
-            return r, g, b
-        end
+        return includeAlpha and {r, g, b, a} or {r, g, b}
     end
 end
 
@@ -740,24 +814,48 @@ function joinARGB(a, r, g, b, normalized)
     if normalized then
         a, r, g, b = math.floor(a * 255), math.floor(r * 255), math.floor(g * 255), math.floor(b * 255)
     end
-    return bit.bor(bit.lshift(a, 24), bit.lshift(r, 16), bit.lshift(g, 8), b)
+
+    local function clamp(value)
+        return math.max(0, math.min(255, value))
+    end
+
+    return bit.bor(bit.lshift(clamp(a), 24), bit.lshift(clamp(r), 16), bit.lshift(clamp(g), 8), clamp(b))
 end
 
-function formattedAddChatMessage(string, color)
-    sampAddChatMessage(string.format("{ABB2B9}[%s]{FFFFFF} %s", firstToUpper(scriptName), string), color)
+function removeHexBrackets(text)
+    return string.gsub(text, "{%x+}", "")
 end
 
-function firstToUpper(string)
-    return (string:gsub("^%l", string.upper))
-end
+function calculateWindowSize(lines, padding)
+    local totalHeight = 0
+    local maxWidth = 0
+    local lineSpacing = imgui.GetTextLineHeightWithSpacing() - imgui.GetTextLineHeight()
 
-function findPivotIndex(pivot)
-    for _, p in ipairs(pivots) do
-        if p.value.x == pivot.x and p.value.y == pivot.y then
-            return p.name
+    for _, text in ipairs(lines) do
+        local processedText = removeHexBrackets(text)
+        local textSize = imgui.CalcTextSize(processedText)
+        totalHeight = totalHeight + textSize.y + lineSpacing
+        if textSize.x > maxWidth then
+            maxWidth = textSize.x
         end
     end
-    return false
+    totalHeight = totalHeight - lineSpacing
+
+    local windowSize = imgui.ImVec2(
+        maxWidth + padding.x * 2 + 1,
+        totalHeight + padding.y * 2 + 1
+    )
+    return windowSize
+end
+
+function formatWantedString(entry)
+    return string.format(
+        "%s (%d): {%s}%s",
+        entry.name,
+        entry.id,
+        entry.charges == 6 and "FF0000FF" or "B4B4B4",
+        wanted.Settings.Stars and string.rep(fa.STAR, entry.charges) or string.format("%d outstanding %s.", entry.charges, entry.charges == 1 and "charge" or "charges")
+    )
 end
 
 function imgui.TextColoredRGB(text)
