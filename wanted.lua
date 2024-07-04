@@ -1,6 +1,6 @@
 script_name("wanted")
 script_author("akacross")
-script_version("0.5.34")
+script_version("0.5.35")
 script_url("https://akacross.net/")
 
 local scriptPath = thisScript().path
@@ -266,7 +266,9 @@ function()
     local textLines = {"No current wanted suspects."}
     if wantedlist then
         textLines = {}
-        for _, entry in ipairs(wantedlist) do table.insert(textLines, formatWantedString(entry)) end
+        for _, entry in ipairs(wantedlist) do
+            table.insert(textLines, formatWantedString(entry))
+        end
     end
     windowSize = calculateWindowSize(textLines, wanted.Window.Padding)
 
@@ -281,13 +283,18 @@ function()
     imgui.PushStyleVarVec2(imgui.StyleVar.WindowPadding, wanted.Window.Padding)
 
     if imgui.Begin(scriptName, menu.wanted, imgui.WindowFlags.NoDecoration) then
-        if not wantedlist then
-            imgui.TextColoredRGB(textLines[1])
-        else
-            for _, v in pairs(wantedlist) do
-                imgui.TextColoredRGB(formatWantedString(v))
-            end
+        local totalTextHeight = #textLines * imgui.GetTextLineHeightWithSpacing()
+        local startY = (windowSize.y - totalTextHeight) / 2
+        
+        for i, text in ipairs(textLines) do
+            local textSize = imgui.CalcTextSize(text)
+            local iconPosX = wanted.Window.Padding.x + wanted.Window.BorderSize / 2
+            local textPosY = startY + (i - 1) * imgui.GetTextLineHeightWithSpacing()
+            
+            imgui.SetCursorPos(imgui.ImVec2(iconPosX, textPosY))
+            imgui.TextColoredRGB(text)
         end
+
         if wanted.Settings.ShowRefresh and (wanted.Settings.Timer - (localClock() - last_wanted)) >= wanted.Settings.Timer - 1 and (wanted.Settings.Timer - (localClock() - last_wanted)) <= 11 then
             local textSize = imgui.CalcTextSize(fa.CHECK)
             local iconPosX = windowSize.x - textSize.x - wanted.Window.BorderSize / 2
@@ -296,14 +303,10 @@ function()
             imgui.SetCursorPos(imgui.ImVec2(iconPosX, iconPosY))
             imgui.TextColoredRGB('{00D900}' .. fa.CHECK)
         end
+        imgui.PopStyleVar(2)
+        imgui.PopStyleColor(2)
+        imgui.End()
     end
-
-    imgui.PopStyleVar()
-    imgui.PopStyleVar()
-    imgui.PopStyleColor()
-    imgui.PopStyleColor()
-
-    imgui.End()
 end).HideCursor = true
 
 imgui.OnFrame(function() return menu.settings[0] end,
@@ -740,7 +743,7 @@ function imgui.handleWindowDragging(pos, size, pivot)
     local boxPos = {x = pos.x - offset.x, y = pos.y - offset.y}
 
     if mpos.x >= boxPos.x and mpos.x <= boxPos.x + size.x and mpos.y >= boxPos.y and mpos.y <= boxPos.y + size.y then
-        if imgui.IsMouseClicked(0) then
+        if imgui.IsMouseClicked(0) and not imgui.IsAnyItemHovered() then
             selectedbox = true
             tempOffset = {x = mpos.x - boxPos.x, y = mpos.y - boxPos.y}
         end
@@ -749,8 +752,12 @@ function imgui.handleWindowDragging(pos, size, pivot)
         if imgui.IsMouseReleased(0) then
             selectedbox = false
         else
-            local newBoxPos = {x = mpos.x - tempOffset.x, y = mpos.y - tempOffset.y}
-            return {x = newBoxPos.x + offset.x, y = newBoxPos.y + offset.y}, true
+            if imgui.IsAnyItemHovered() then
+				selectedbox = false
+			else
+                local newBoxPos = {x = mpos.x - tempOffset.x, y = mpos.y - tempOffset.y}
+                return {x = newBoxPos.x + offset.x, y = newBoxPos.y + offset.y}, true
+            end
         end
     end
     return {x = pos.x, y = pos.y}, false
@@ -837,11 +844,12 @@ function calculateWindowSize(lines, padding)
     end
     totalHeight = totalHeight - lineSpacing
 
+    -- Calculate window size with effective padding
     local windowSize = imgui.ImVec2(
-        maxWidth + padding.x * 2 + 1,
-        totalHeight + padding.y * 2 + 1
+        maxWidth + padding.x * 2,
+        totalHeight + padding.y * 2
     )
-    return windowSize
+    return windowSize, effectivePadding
 end
 
 function formatWantedString(entry)
