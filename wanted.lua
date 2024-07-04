@@ -849,7 +849,7 @@ function calculateWindowSize(lines, padding)
         maxWidth + padding.x * 2,
         totalHeight + padding.y * 2
     )
-    return windowSize, effectivePadding
+    return windowSize
 end
 
 function formatWantedString(entry)
