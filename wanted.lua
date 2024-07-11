@@ -1,11 +1,15 @@
 script_name("wanted")
 script_author("akacross")
-script_version("0.5.35")
+script_version("0.5.36")
 script_url("https://akacross.net/")
 
 local scriptPath = thisScript().path
 local scriptName = thisScript().name
 local scriptVersion = thisScript().version
+
+-- Change Log
+-- 0.5.36
+-- Fixed: Improved detection of faction MOTDs to ensure that the menu is re-enabled when the player reconnects.
 
 -- Requirements
 require 'lib.moonloader'
@@ -127,8 +131,6 @@ function main()
     createDirectory(configDir)
     wanted = handleConfigFile(cfgFile, wanted_defaultSettings, wanted)
 
-    wanted.Settings.AutoCheckUpdate = true
-
     repeat wait(0) until isSampAvailable()
     handleUpdate()
     registerChatCommands()
@@ -223,26 +225,10 @@ function sampev.onServerMessage(color, text)
             end
         end
     else
-        if ((text:match("LSPD MOTD: (.+)") or text:match("SASD MOTD: (.+)") or text:match("FBI MOTD: (.+)") or text:match("ARES MOTD: (.+)")) and not text:find("SMS:") and not text:find("Advertisement:") and color == -65366) or (text:match("%* You are now a Lawyer, type /help to see your new commands.") and color == 869072810) then
+        if ((text:find("LSPD MOTD:") or text:find("SASD MOTD:") or text:find("FBI MOTD:") or text:find("ARES MOTD:")) and not text:find("SMS:") and not text:find("Advertisement:") and color == -65366) or (text:match("%* You are now a Lawyer, type /help to see your new commands.") and color == 869072810) then
             wanted.Settings.Enabled = true
         end
     end
-end
-
-function loadFontAwesome6Icons(iconList, fontSize)
-    local config = imgui.ImFontConfig()
-    config.MergeMode = true
-    config.PixelSnapH = true
-    config.GlyphMinAdvanceX = 14
-    local builder = imgui.ImFontGlyphRangesBuilder()
-    
-    for _, icon in ipairs(iconList) do
-        builder:AddText(fa(icon))
-    end
-    
-    local glyphRanges = imgui.ImVector_ImWchar()
-    builder:BuildRanges(glyphRanges)
-    imgui.GetIO().Fonts:AddFontFromMemoryCompressedBase85TTF(fa.get_font_data_base85("solid"), fontSize, config, glyphRanges[0].Data)
 end
 
 imgui.OnInitialize(function()
@@ -288,8 +274,8 @@ function()
         
         for i, text in ipairs(textLines) do
             local textSize = imgui.CalcTextSize(text)
-            local iconPosX = wanted.Window.Padding.x + wanted.Window.BorderSize / 2
-            local textPosY = startY + (i - 1) * imgui.GetTextLineHeightWithSpacing()
+            local iconPosX = wanted.Window.Padding.x + (wanted.Window.BorderSize / 2 - wanted.Window.BorderSize / 4) 
+            local textPosY = startY + (i - 1) * imgui.GetTextLineHeightWithSpacing() + 1
             
             imgui.SetCursorPos(imgui.ImVec2(iconPosX, textPosY))
             imgui.TextColoredRGB(text)
@@ -297,8 +283,8 @@ function()
 
         if wanted.Settings.ShowRefresh and (wanted.Settings.Timer - (localClock() - last_wanted)) >= wanted.Settings.Timer - 1 and (wanted.Settings.Timer - (localClock() - last_wanted)) <= 11 then
             local textSize = imgui.CalcTextSize(fa.CHECK)
-            local iconPosX = windowSize.x - textSize.x - wanted.Window.BorderSize / 2
-            local iconPosY = wanted.Window.BorderSize / 2
+            local iconPosX = windowSize.x - textSize.x - (wanted.Window.BorderSize / 2 + 1)
+            local iconPosY = wanted.Window.BorderSize / 4 - 2
 
             imgui.SetCursorPos(imgui.ImVec2(iconPosX, iconPosY))
             imgui.TextColoredRGB('{00D900}' .. fa.CHECK)
@@ -316,8 +302,8 @@ function()
     local center = imgui.ImVec2(io.DisplaySize.x / 2, io.DisplaySize.y / 2)
     imgui.SetNextWindowPos(center, imgui.Cond.FirstUseEver, imgui.ImVec2(0.5, 0.5))
     imgui.PushStyleVarVec2(imgui.StyleVar.WindowPadding, imgui.ImVec2(0, 0))
-    imgui.Begin(title, menu.settings, imgui.WindowFlags.NoResize + imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoScrollbar + imgui.WindowFlags.AlwaysAutoResize)
-        imgui.BeginChild("## Buttons", imgui.ImVec2(272, 41), true)
+    if imgui.Begin(title, menu.settings, imgui.WindowFlags.NoResize + imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoScrollbar + imgui.WindowFlags.AlwaysAutoResize) then
+        if imgui.BeginChild("## Buttons", imgui.ImVec2(272, 41), true) then
             imgui.SetCursorPos(imgui.ImVec2(0, 0))
             if imgui.CustomButtonWithTooltip(
                 fa.POWER_OFF..'##1',
@@ -380,21 +366,11 @@ function()
             ) then
                 checkForUpdate()
             end
-        imgui.EndChild()
+            imgui.EndChild()
+        end
 
         imgui.SetCursorPos(imgui.ImVec2(5, 65))
-        imgui.BeginChild("## Settings", imgui.ImVec2(268, 150), false)
-            if imgui.Checkbox('Stars', new.bool(wanted.Settings.Stars)) then
-                wanted.Settings.Stars = not wanted.Settings.Stars
-            end
-            imgui.SameLine()
-            imgui.PushItemWidth(35)
-            local padding = new.float[1](wanted.Window.Padding.x)
-            if imgui.DragFloat('Padding', padding, 0.1, 1, 10, "%.1f") then
-                wanted.Window.Padding = {x = padding[0], y = padding[0]}
-            end
-            imgui.PopItemWidth()
-            
+        if imgui.BeginChild("## Settings", imgui.ImVec2(268, 122), false) then
             if imgui.Checkbox('Show Refresh', new.bool(wanted.Settings.ShowRefresh)) then
                 wanted.Settings.ShowRefresh = not wanted.Settings.ShowRefresh
             end
@@ -413,6 +389,13 @@ function()
             end
             imgui.SameLine()
             imgui.Text('Background Color')
+            imgui.SameLine()
+            imgui.PushItemWidth(35)
+            local padding = new.float[1](wanted.Window.Padding.x)
+            if imgui.DragFloat('Padding', padding, 0.1, 1, 10, "%.1f") then
+                wanted.Window.Padding = {x = padding[0], y = padding[0]}
+            end
+            imgui.PopItemWidth()
             
             local borderColor = new.float[4](convertColor(wanted.Window.BorderColor, true, true))
             local borderStatus = imgui.ColorEdit4('##borderColor', borderColor, imgui.ColorEditFlags.NoInputs + imgui.ColorEditFlags.NoLabel + imgui.ColorEditFlags.AlphaBar)
@@ -422,15 +405,15 @@ function()
             imgui.SameLine()
             imgui.Text('Border Color')
             imgui.SameLine()
-            imgui.PushItemWidth(35)
+            imgui.PushItemWidth(30)
             local border = new.float[1](wanted.Window.BorderSize)
-            if imgui.DragFloat('Border Size', border, 0.1, 1, 5, "%.1f") then
+            if imgui.DragFloat('Border Size', border, 1, 0, 5, "%.f") then
                 wanted.Window.BorderSize = border[0]
             end
             imgui.PopItemWidth()
 
             imgui.PushItemWidth(130)
-            if imgui.BeginCombo("Select Pivot", findPivotIndex(wanted.Window.Pivot)) then
+            if imgui.BeginCombo("Alignment", findPivotIndex(wanted.Window.Pivot)) then
                 for i = 1, #pivots do
                     local pivot = pivots[i]
                     if imgui.Selectable(pivot.name .. " " .. pivot.icon, comparePivots(wanted.Window.Pivot, pivot.value)) then
@@ -440,6 +423,10 @@ function()
                 imgui.EndCombo()
             end
             imgui.PopItemWidth()
+            imgui.SameLine()
+            if imgui.Checkbox('Stars', new.bool(wanted.Settings.Stars)) then
+                wanted.Settings.Stars = not wanted.Settings.Stars
+            end
 
             if imgui.Checkbox('Auto-Update', new.bool(wanted.Settings.AutoCheckUpdate)) then
                 wanted.Settings.AutoCheckUpdate = not wanted.Settings.AutoCheckUpdate
@@ -448,10 +435,11 @@ function()
             if imgui.Checkbox('Auto-Save', new.bool(wanted.Settings.AutoSave)) then
                 wanted.Settings.AutoSave = not wanted.Settings.AutoSave
             end
-
-        imgui.EndChild()
-    imgui.PopStyleVar()
-    imgui.End()
+            imgui.EndChild()
+        end
+        imgui.PopStyleVar()
+        imgui.End()
+    end
 end)
 
 local function handleButton(label, action, width)
@@ -467,31 +455,31 @@ imgui.OnFrame(function() return menu.confirm[0] end, function()
     local io = imgui.GetIO()
     local center = imgui.ImVec2(io.DisplaySize.x / 2, io.DisplaySize.y / 2)
     imgui.SetNextWindowPos(center, imgui.Cond.FirstUseEver, imgui.ImVec2(0.5, 0.5))
-    imgui.Begin('', menu.confirm, imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoResize + imgui.WindowFlags.NoTitleBar + imgui.WindowFlags.AlwaysAutoResize)
-    if not imgui.IsWindowFocused() then imgui.SetNextWindowFocus() end
-    for n, t in pairs(confirmData) do
-        if t.status then
-            if n == 'update' then
-                imgui.Text('Do you want to update this script?')
-                handleButton(fa.CIRCLE_CHECK .. ' Update', function()
-                    updateScript()
-                    t.status = false
-                end)
-                imgui.SameLine()
-                handleButton(fa.CIRCLE_XMARK .. ' Cancel', function()
-                    t.status = false
-                end)
+    if imgui.Begin('', menu.confirm, imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoResize + imgui.WindowFlags.NoTitleBar + imgui.WindowFlags.AlwaysAutoResize) then
+        if not imgui.IsWindowFocused() then imgui.SetNextWindowFocus() end
+        for n, t in pairs(confirmData) do
+            if t.status then
+                if n == 'update' then
+                    imgui.Text('Do you want to update this script?')
+                    handleButton(fa.CIRCLE_CHECK .. ' Update', function()
+                        updateScript()
+                        t.status = false
+                    end)
+                    imgui.SameLine()
+                    handleButton(fa.CIRCLE_XMARK .. ' Cancel', function()
+                        t.status = false
+                    end)
+                end
             end
         end
+        imgui.End()
     end
-    imgui.End()
 end)
 
 function checkForUpdate()
 	asyncHttpRequest('GET', updateUrl, nil,
 		function(response)
             local updateVersion = response.text:match("version: (.+)")
-            print(compareVersions(scriptVersion, updateVersion))
             if updateVersion and compareVersions(scriptVersion, updateVersion) == -1 then
                 confirmData['update'].status = true
                 menu.confirm[0] = true
@@ -628,6 +616,10 @@ function ensureDefaults(config, defaults, reset, ignoreKeys)
         return false
     end
 
+    local function isEmptyTable(t)
+        return next(t) == nil
+    end
+
     local function cleanupConfig(conf, def)
         local localStatus = false
         for k, v in pairs(conf) do
@@ -638,6 +630,10 @@ function ensureDefaults(config, defaults, reset, ignoreKeys)
                 localStatus = true
             elseif type(conf[k]) == "table" and type(def[k]) == "table" then
                 localStatus = cleanupConfig(conf[k], def[k]) or localStatus
+                if isEmptyTable(conf[k]) then
+                    conf[k] = nil
+                    localStatus = true
+                end
             end
         end
         return localStatus
@@ -663,7 +659,6 @@ function ensureDefaults(config, defaults, reset, ignoreKeys)
         return localStatus
     end
 
-    -- Use metatable to handle default values
     setmetatable(config, {__index = function(t, k)
         if type(defaults[k]) == "table" then
             t[k] = {}
@@ -939,6 +934,22 @@ function imgui.CustomButtonWithTooltip(name, color, colorHovered, colorActive, s
         imgui.PopStyleVar()
     end
     return result
+end
+
+function loadFontAwesome6Icons(iconList, fontSize)
+    local config = imgui.ImFontConfig()
+    config.MergeMode = true
+    config.PixelSnapH = true
+    config.GlyphMinAdvanceX = 14
+    local builder = imgui.ImFontGlyphRangesBuilder()
+    
+    for _, icon in ipairs(iconList) do
+        builder:AddText(fa(icon))
+    end
+    
+    local glyphRanges = imgui.ImVector_ImWchar()
+    builder:BuildRanges(glyphRanges)
+    imgui.GetIO().Fonts:AddFontFromMemoryCompressedBase85TTF(fa.get_font_data_base85("solid"), fontSize, config, glyphRanges[0].Data)
 end
 
 function apply_custom_style()
