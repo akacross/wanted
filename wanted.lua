@@ -1,6 +1,7 @@
 script_name("wanted")
+script_description("Wanted List")
 script_author("akacross")
-script_version("0.5.36")
+script_version("0.5.37")
 script_url("https://akacross.net/")
 
 local scriptPath = thisScript().path
@@ -8,20 +9,59 @@ local scriptName = thisScript().name
 local scriptVersion = thisScript().version
 
 -- Change Log
+-- 0.5.37
+-- Fixed: Moved detection of faction MOTDs and role messages to ensure menu re-enables on reconnect.
+-- Added: Added a checkbox to the settings to enable or disable the ping display.
 -- 0.5.36
 -- Fixed: Improved detection of faction MOTDs to ensure that the menu is re-enabled when the player reconnects.
 
+-- Dependency Manager
+local function safeRequire(module)
+    local success, result = pcall(require, module)
+    return success and result or nil, result
+end
+
 -- Requirements
-require 'lib.moonloader'
-local ffi = require 'ffi'
-local effil = require 'effil'
-local mem = require 'memory'
-local wm = require 'lib.windows.message'
-local imgui = require 'mimgui'
-local encoding = require 'encoding'
-local sampev = require 'lib.samp.events'
-local fa = require 'fAwesome6'
-local dlstatus = require 'moonloader'.download_status
+local dependencies = {
+    {name = 'moonloader', var = 'moonloader', extras = {dlstatus = 'download_status'}},
+    {name = 'ffi', var = 'ffi'},
+    {name = 'memory', var = 'mem'},
+    {name = 'windows.message', var = 'wm'},
+    {name = 'mimgui', var = 'imgui'},
+    {name = 'encoding', var = 'encoding'},
+    {name = 'samp.events', var = 'sampev'},
+    {name = 'fAwesome6', var = 'fa'}
+}
+
+local loadedModules, statusMessages = {}, {success = {}, failed = {}}
+for _, dep in ipairs(dependencies) do
+    local loadedModule, errorMsg = safeRequire(dep.name)
+    loadedModules[dep.var] = loadedModule
+    table.insert(statusMessages[loadedModule and "success" or "failed"], loadedModule and dep.name or string.format("%s (%s)", dep.name, errorMsg))
+end
+
+-- Assign loaded modules to local variables
+for var, module in pairs(loadedModules) do
+    _G[var] = module
+end
+
+-- Assign extra fields
+for _, dep in ipairs(dependencies) do
+    if dep.extras and loadedModules[dep.var] then
+        for extraVar, extraField in pairs(dep.extras) do
+            _G[extraVar] = loadedModules[dep.var][extraField]
+        end
+    end
+end
+
+-- Print status messages
+print("Loaded modules: " .. table.concat(statusMessages.success, ", "))
+if #statusMessages.failed > 0 then
+    print("Failed to load modules: " .. table.concat(statusMessages.failed, ", "))
+end
+
+-- Dynamically set script dependencies based on loaded modules
+script_dependencies(table.unpack(statusMessages.success))
 
 -- Encoding
 encoding.default = 'CP1251'
@@ -31,6 +71,7 @@ local u8 = encoding.UTF8
 local workingDir = getWorkingDirectory()
 local configDir = workingDir .. '\\config\\'
 local cfgFile = configDir .. 'wanted.json'
+local updateFile = configDir .. 'wanted.txt'
 
 -- URLs
 local url = "https://raw.githubusercontent.com/akacross/wanted/main/"
@@ -53,6 +94,7 @@ local wanted_defaultSettings = {
     Settings = {
         Enabled = true,
         Stars = false,
+        Ping = false,
         ShowRefresh = false,
         Timer = 5,
         AutoCheckUpdate = true,
@@ -178,17 +220,20 @@ function sampev.onShowTextDraw(id, data)
 end
 
 function sampev.onServerMessage(color, text)
-    if wanted.Settings.Enabled or commandSent then
-        if text:match("You're not a Lawyer / Cop / FBI!") and color == -1347440726 then
-            wanted.Settings.Enabled = false
-        end
+    if ((text:find("LSPD MOTD:") or text:find("SASD MOTD:") or text:find("FBI MOTD:") or text:find("ARES MOTD:")) and not text:find("SMS:") and not text:find("Advertisement:") and color == -65366) or (text:match("%* You are now a Lawyer, type /help to see your new commands.") and color == 869072810) then
+        wanted.Settings.Enabled = true
+    end
 
+    if text:match("You're not a Lawyer / Cop / FBI!") and color == -1347440726 then
+        wanted.Settings.Enabled = false
+    end
+
+    if wanted.Settings.Enabled or commandSent then
         local nickname = text:match("HQ: (.+) has been processed, was arrested.")
         if nickname and wantedlist and color == 641859242 then
             for k, v in pairs(wantedlist) do
                 if v.name:match(nickname) then
                     table.remove(wantedlist, k)
-                    break
                 end
             end
         end
@@ -224,10 +269,6 @@ function sampev.onServerMessage(color, text)
                 return false
             end
         end
-    else
-        if ((text:find("LSPD MOTD:") or text:find("SASD MOTD:") or text:find("FBI MOTD:") or text:find("ARES MOTD:")) and not text:find("SMS:") and not text:find("Advertisement:") and color == -65366) or (text:match("%* You are now a Lawyer, type /help to see your new commands.") and color == 869072810) then
-            wanted.Settings.Enabled = true
-        end
     end
 end
 
@@ -240,8 +281,8 @@ imgui.OnInitialize(function()
         "ARROW_UP_RIGHT", "ARROW_LEFT", "SQUARE", "ARROW_RIGHT",
         "ARROW_DOWN_LEFT", "ARROW_DOWN", "ARROW_DOWN_RIGHT"
     }
-    loadFontAwesome6Icons(smallIcons, 8)
-    loadFontAwesome6Icons(defaultIcons, 12)
+    loadFontAwesome6Icons(smallIcons, 8, "solid")
+    loadFontAwesome6Icons(defaultIcons, 12, "solid")
     apply_custom_style()
 end)
 
@@ -297,7 +338,7 @@ end).HideCursor = true
 
 imgui.OnFrame(function() return menu.settings[0] end,
 function()
-    local title = string.format("%s %s Settings - Version: %s", fa.STAR, firstToUpper(scriptName), scriptVersion)
+    local title = string.format("%s %s Settings - v%s", fa.STAR, firstToUpper(scriptName), scriptVersion)
     local io = imgui.GetIO()
     local center = imgui.ImVec2(io.DisplaySize.x / 2, io.DisplaySize.y / 2)
     imgui.SetNextWindowPos(center, imgui.Cond.FirstUseEver, imgui.ImVec2(0.5, 0.5))
@@ -411,6 +452,10 @@ function()
                 wanted.Window.BorderSize = border[0]
             end
             imgui.PopItemWidth()
+            imgui.SameLine()
+            if imgui.Checkbox('Ping', new.bool(wanted.Settings.Ping)) then
+                wanted.Settings.Ping = not wanted.Settings.Ping
+            end
 
             imgui.PushItemWidth(130)
             if imgui.BeginCombo("Alignment", findPivotIndex(wanted.Window.Pivot)) then
@@ -452,10 +497,11 @@ local function handleButton(label, action, width)
 end
 
 imgui.OnFrame(function() return menu.confirm[0] end, function()
+    local title = string.format("%s %s - v%s", fa.RETWEET, firstToUpper(scriptName), scriptVersion)
     local io = imgui.GetIO()
     local center = imgui.ImVec2(io.DisplaySize.x / 2, io.DisplaySize.y / 2)
     imgui.SetNextWindowPos(center, imgui.Cond.FirstUseEver, imgui.ImVec2(0.5, 0.5))
-    if imgui.Begin('', menu.confirm, imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoResize + imgui.WindowFlags.NoTitleBar + imgui.WindowFlags.AlwaysAutoResize) then
+    if imgui.Begin(title, menu.confirm, imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoResize + imgui.WindowFlags.AlwaysAutoResize) then
         if not imgui.IsWindowFocused() then imgui.SetNextWindowFocus() end
         for n, t in pairs(confirmData) do
             if t.status then
@@ -477,18 +523,20 @@ imgui.OnFrame(function() return menu.confirm[0] end, function()
 end)
 
 function checkForUpdate()
-	asyncHttpRequest('GET', updateUrl, nil,
-		function(response)
-            local updateVersion = response.text:match("version: (.+)")
-            if updateVersion and compareVersions(scriptVersion, updateVersion) == -1 then
-                confirmData['update'].status = true
-                menu.confirm[0] = true
+    downloadFiles({{url = updateUrl, path = updateFile, replace = true}}, function(result)
+        if result then
+            local file = io.open(updateFile, "r")
+            if file then
+                local content = file:read("*a")
+                file:close()
+                local updateVersion = content:match("version: (.+)")
+                if updateVersion and compareVersions(scriptVersion, updateVersion) == -1 then
+                    confirmData['update'].status = true
+                    menu.confirm[0] = true
+                end
             end
-		end,
-		function(err)
-            print(err)
-		end
-	)
+        end
+    end)
 end
 
 function updateScript()
@@ -603,6 +651,14 @@ function saveConfig(filePath, config)
     return true
 end
 
+function saveConfigWithErrorHandling(path, config)
+    local success, err = saveConfig(path, config)
+    if not success then
+        print("Error saving config to " .. path .. ": " .. err)
+    end
+    return success
+end
+
 function ensureDefaults(config, defaults, reset, ignoreKeys)
     ignoreKeys = ignoreKeys or {}
     local status = false
@@ -670,43 +726,6 @@ function ensureDefaults(config, defaults, reset, ignoreKeys)
     status = applyDefaults(config, defaults)
     status = cleanupConfig(config, defaults) or status
     return status
-end
-
-function asyncHttpRequest(method, url, args, resolve, reject)
-    local request_thread = effil.thread(function (method, url, args)
-        local requests = require 'requests'
-        local result, response = pcall(requests.request, method, url, args)
-        if result then
-            response.json, response.xml = nil, nil
-            return true, response
-        else
-            return false, response
-        end
-    end)(method, url, args)
-    if not resolve then resolve = function() end end
-    if not reject then reject = function() end end
-    lua_thread.create(function()
-        local runner = request_thread
-        while true do
-            local status, err = runner:status()
-            if not err then
-                if status == 'completed' then
-                    local result, response = runner:get()
-                    if result then
-                        resolve(response)
-                    else
-                        reject(response)
-                    end
-                    return
-                elseif status == 'canceled' then
-                    return reject(status)
-                end
-            else
-                return reject(err)
-            end
-            wait(0)
-        end
-    end)
 end
 
 function compareVersions(version1, version2)
@@ -812,14 +831,6 @@ function firstToUpper(string)
     return (string:gsub("^%l", string.upper))
 end
 
-function saveConfigWithErrorHandling(path, config)
-    local success, err = saveConfig(path, config)
-    if not success then
-        print("Error saving config to " .. path .. ": " .. err)
-    end
-    return success
-end
-
 function removeHexBrackets(text)
     return string.gsub(text, "{%x+}", "")
 end
@@ -839,7 +850,6 @@ function calculateWindowSize(lines, padding)
     end
     totalHeight = totalHeight - lineSpacing
 
-    -- Calculate window size with effective padding
     local windowSize = imgui.ImVec2(
         maxWidth + padding.x * 2,
         totalHeight + padding.y * 2
@@ -848,13 +858,11 @@ function calculateWindowSize(lines, padding)
 end
 
 function formatWantedString(entry)
-    return string.format(
-        "%s (%d): {%s}%s",
-        entry.name,
-        entry.id,
-        entry.charges == 6 and "FF0000FF" or "B4B4B4",
-        wanted.Settings.Stars and string.rep(fa.STAR, entry.charges) or string.format("%d outstanding %s.", entry.charges, entry.charges == 1 and "charge" or "charges")
-    )
+    local pingInfo = wanted.Settings.Ping and string.format(" (Ping: %d):", sampGetPlayerPing(entry.id)) or ""
+    local chargeColor = entry.charges == 6 and "FF0000FF" or "B4B4B4"
+    local chargeInfo = wanted.Settings.Stars and string.rep(fa.STAR, entry.charges) or string.format("%d outstanding %s.", entry.charges, entry.charges == 1 and "charge" or "charges")
+    
+    return string.format("%s (%d):%s {%s}%s", entry.name, entry.id, pingInfo, chargeColor, chargeInfo)
 end
 
 function imgui.TextColoredRGB(text)
@@ -936,7 +944,7 @@ function imgui.CustomButtonWithTooltip(name, color, colorHovered, colorActive, s
     return result
 end
 
-function loadFontAwesome6Icons(iconList, fontSize)
+function loadFontAwesome6Icons(iconList, fontSize, style)
     local config = imgui.ImFontConfig()
     config.MergeMode = true
     config.PixelSnapH = true
@@ -949,7 +957,7 @@ function loadFontAwesome6Icons(iconList, fontSize)
     
     local glyphRanges = imgui.ImVector_ImWchar()
     builder:BuildRanges(glyphRanges)
-    imgui.GetIO().Fonts:AddFontFromMemoryCompressedBase85TTF(fa.get_font_data_base85("solid"), fontSize, config, glyphRanges[0].Data)
+    imgui.GetIO().Fonts:AddFontFromMemoryCompressedBase85TTF(fa.get_font_data_base85(style), fontSize, config, glyphRanges[0].Data)
 end
 
 function apply_custom_style()
